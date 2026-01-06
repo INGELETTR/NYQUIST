@@ -7,7 +7,6 @@ import base64
 from io import BytesIO
 import tempfile
 import os
-import re
 warnings.filterwarnings('ignore')
 
 # Set page config
@@ -16,209 +15,6 @@ st.set_page_config(
     page_icon="📈",
     layout="wide"
 )
-
-def parse_transfer_function(tf_str):
-    """
-    Robust transfer function parser that handles parentheses
-    """
-    # Clean input
-    tf_str = tf_str.strip().replace(' ', '').replace('^', '**')
-    
-    # Handle division
-    if '/' in tf_str:
-        parts = tf_str.split('/')
-        if len(parts) > 2:
-            raise ValueError("Multiple division signs found")
-        num_str, den_str = parts[0], parts[1]
-    else:
-        num_str, den_str = tf_str, "1"
-    
-    # Remove outer parentheses if they exist
-    def strip_outer_parens(s):
-        s = s.strip()
-        while s.startswith('(') and s.endswith(')'):
-            # Check if the parentheses are balanced
-            if s.count('(') == s.count(')') and s.find('(') == 0 and s.rfind(')') == len(s)-1:
-                s = s[1:-1].strip()
-            else:
-                break
-        return s
-    
-    num_str = strip_outer_parens(num_str)
-    den_str = strip_outer_parens(den_str)
-    
-    # Parse using robust method
-    num_coeffs = parse_expression(num_str)
-    den_coeffs = parse_expression(den_str)
-    
-    return num_coeffs, den_coeffs
-
-def parse_expression(expr):
-    """
-    Parse mathematical expression with parentheses
-    """
-    if expr == '' or expr == '0':
-        return [0.0]
-    
-    # Try direct float first
-    try:
-        return [float(expr)]
-    except:
-        pass
-    
-    # Handle multiplication with parentheses
-    expr = expand_parentheses(expr)
-    
-    # Now parse the expanded expression
-    return parse_polynomial(expr)
-
-def expand_parentheses(expr):
-    """
-    Expand expressions with parentheses like (s+1)*(s+2) or 20*(s^2+1)
-    """
-    # First handle multiplication with parentheses
-    while '*' in expr and '(' in expr:
-        # Find pattern like a*(b) or (a)*(b)
-        match = re.search(r'([^()]*)\*\(([^()]+)\)|\(([^()]+)\)\*([^()]*)', expr)
-        if not match:
-            break
-            
-        if match.group(1) and match.group(2):  # a*(b)
-            a, b = match.group(1), match.group(2)
-            result = multiply_terms(a, b)
-            expr = expr.replace(f'{a}*({b})', result)
-        elif match.group(3) and match.group(4):  # (a)*(b)
-            a, b = match.group(3), match.group(4)
-            result = multiply_terms(a, b)
-            expr = expr.replace(f'({a})*({b})', result)
-    
-    return expr
-
-def multiply_terms(a, b):
-    """
-    Multiply two terms, can be numbers or polynomials
-    """
-    # If a is empty or 1
-    if a == '' or a == '1':
-        return b
-    
-    # Try to parse a as a number
-    try:
-        multiplier = float(a)
-        # Parse b as polynomial
-        b_coeffs = parse_polynomial(b)
-        result_coeffs = [multiplier * c for c in b_coeffs]
-        
-        # Convert back to string representation
-        terms = []
-        for i, coeff in enumerate(result_coeffs):
-            if abs(coeff) > 1e-10:
-                power = len(result_coeffs) - i - 1
-                if power == 0:
-                    terms.append(f"{coeff:+g}")
-                elif power == 1:
-                    terms.append(f"{coeff:+g}*s")
-                else:
-                    terms.append(f"{coeff:+g}*s**{power}")
-        
-        result = ''.join(terms).lstrip('+')
-        return result if result else '0'
-    
-    except:
-        # a is not a number, treat as polynomial
-        a_coeffs = parse_polynomial(a)
-        b_coeffs = parse_polynomial(b)
-        
-        # Multiply polynomials
-        result_coeffs = [0.0] * (len(a_coeffs) + len(b_coeffs) - 1)
-        for i, coeff1 in enumerate(a_coeffs):
-            for j, coeff2 in enumerate(b_coeffs):
-                result_coeffs[i + j] += coeff1 * coeff2
-        
-        # Convert to string
-        terms = []
-        for i, coeff in enumerate(result_coeffs):
-            if abs(coeff) > 1e-10:
-                power = len(result_coeffs) - i - 1
-                if power == 0:
-                    terms.append(f"{coeff:+g}")
-                elif power == 1:
-                    terms.append(f"{coeff:+g}*s")
-                else:
-                    terms.append(f"{coeff:+g}*s**{power}")
-        
-        result = ''.join(terms).lstrip('+')
-        return result if result else '0'
-
-def parse_polynomial(expr):
-    """
-    Parse polynomial without parentheses
-    """
-    if expr == '0' or expr == '':
-        return [0.0]
-    
-    # Try constant first
-    try:
-        return [float(expr)]
-    except:
-        pass
-    
-    # Handle special cases
-    if expr == 's':
-        return [1.0, 0.0]
-    if expr == '-s':
-        return [-1.0, 0.0]
-    
-    # Convert to standard format
-    expr = expr.replace('**', '^')
-    
-    # Add + at beginning if no sign
-    if expr[0] not in '+-':
-        expr = '+' + expr
-    
-    # Find all terms
-    terms = re.findall(r'([+-][^+-]*)', expr)
-    
-    # Find maximum power
-    max_power = 0
-    for term in terms:
-        if 's^' in term:
-            power = int(term.split('s^')[1])
-            max_power = max(max_power, power)
-        elif '*s' in term or (term.endswith('s') and not term.endswith('^s')):
-            max_power = max(max_power, 1)
-    
-    # Initialize coefficients
-    coeffs = [0.0] * (max_power + 1)
-    
-    # Fill coefficients
-    for term in terms:
-        sign = -1 if term[0] == '-' else 1
-        term = term[1:]  # Remove sign
-        
-        if 's^' in term:
-            parts = term.split('s^')
-            coeff_str = parts[0]
-            coeff = float(coeff_str) if coeff_str not in ['', '+', '-'] else 1.0
-            power = int(parts[1])
-        elif '*s' in term:
-            coeff = float(term.split('*s')[0]) if term.split('*s')[0] else 1.0
-            power = 1
-        elif term.endswith('s'):
-            coeff_str = term[:-1]
-            coeff = float(coeff_str) if coeff_str else 1.0
-            power = 1
-        else:
-            coeff = float(term)
-            power = 0
-        
-        coeffs[max_power - power] = sign * coeff
-    
-    # Remove trailing zeros
-    while len(coeffs) > 1 and abs(coeffs[-1]) < 1e-10:
-        coeffs.pop()
-    
-    return coeffs
 
 class NyquistVisualizer:
     def __init__(self, num=None, den=None, min_freq=-2, max_freq=2):
@@ -231,7 +27,7 @@ class NyquistVisualizer:
         self.min_freq = min_freq
         self.max_freq = max_freq
         
-        # Frequency range for plots (more points for smooth plots)
+        # Frequency range for plots
         self.w = np.logspace(min_freq, max_freq, 1000)
         
         # Calculate frequency response
@@ -294,7 +90,7 @@ class NyquistVisualizer:
         y_range = y_max - y_min
         
         # Ensure plot is square and not too narrow
-        plot_range = max(x_range, y_range, 0.1) * (1 + margin)  # At least 0.1 range
+        plot_range = max(x_range, y_range, 0.1) * (1 + margin)
         center_x = (x_min + x_max) / 2
         center_y = (y_min + y_max) / 2
         
@@ -483,6 +279,35 @@ class NyquistVisualizer:
 # Main App
 st.title("📈 Bode & Nyquist Visualizer")
 
+# Input section - NO PARSER, JUST COEFFICIENTS
+st.markdown("### Enter Transfer Function Coefficients")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("**Numerator Coefficients**")
+    st.markdown("Enter coefficients for highest to lowest power of s")
+    st.markdown("*Example: For 20*(s² + 1) = 20s² + 0s + 20, enter: 20, 0, 20*")
+    
+    num_input = st.text_input(
+        "Numerator [aₙ, aₙ₋₁, ..., a₁, a₀]:",
+        value="1",
+        key="num_input",
+        help="Comma-separated coefficients, e.g., '1' for 1, '20,0,20' for 20s²+20"
+    )
+
+with col2:
+    st.markdown("**Denominator Coefficients**")
+    st.markdown("Enter coefficients for highest to lowest power of s")
+    st.markdown("*Example: For s² + 0.5s + 1, enter: 1, 0.5, 1*")
+    
+    den_input = st.text_input(
+        "Denominator [bₘ, bₘ₋₁, ..., b₁, b₀]:",
+        value="1, 1",
+        key="den_input",
+        help="Comma-separated coefficients, e.g., '1,1' for s+1, '1,0.5,1' for s²+0.5s+1"
+    )
+
 # Sidebar for frequency range
 with st.sidebar:
     st.markdown("### Frequency Range")
@@ -509,67 +334,75 @@ with st.sidebar:
         min_freq, max_freq = -2.0, 2.0
     
     st.markdown("---")
-    st.markdown("### Examples")
+    st.markdown("### Quick Examples")
     
     examples = [
-        ("1/(s+1)", "First order"),
-        ("20*(s^2+1)", "Gain × (s² + 1)"),
-        ("s*(s+100)", "s(s + 100)"),
-        ("(s+1)/(s^2+2*s+3)", "With numerator"),
-        ("1/(s^2+0.5*s+1)", "Second order"),
+        ("First Order", "[1]", "[1, 1]", "1/(s+1)"),
+        ("Second Order", "[1]", "[1, 0.5, 1]", "1/(s²+0.5s+1)"),
+        ("Integrator", "[1]", "[1, 0]", "1/s"),
+        ("Differentiator", "[1, 0]", "[1]", "s"),
+        ("20*(s²+1)", "[20, 0, 20]", "[1]", "20s²+20"),
+        ("s*(s+100)", "[1, 100, 0]", "[1]", "s²+100s"),
     ]
     
-    for example, desc in examples:
-        if st.button(f"{example}", key=f"sidebar_{example}"):
-            st.session_state.tf_input = example
+    for name, num_ex, den_ex, desc in examples:
+        if st.button(f"{name}: {desc}", key=f"ex_{name}"):
+            st.session_state.num_input = num_ex.strip("[]").replace(" ", "")
+            st.session_state.den_input = den_ex.strip("[]").replace(" ", "")
+            st.rerun()
 
-# Main input section
-st.markdown("### Enter Transfer Function")
-tf_input = st.text_input(
-    "Transfer Function (s-domain):",
-    value="1/(s+1)",
-    help="Examples: 20*(s^2+1), s*(s+100), (s+1)/(s^2+2*s+3), 1/(s^2+0.5*s+1)"
-)
+# Parse coefficients
+def parse_coeffs(coefficient_string):
+    """Parse comma-separated coefficients into list of floats"""
+    if not coefficient_string:
+        return [1.0]
+    
+    # Remove brackets if present
+    coeff_str = coefficient_string.strip("[]")
+    
+    # Split by comma and convert to float
+    try:
+        coeffs = [float(x.strip()) for x in coeff_str.split(',') if x.strip()]
+        return coeffs if coeffs else [1.0]
+    except ValueError:
+        st.error(f"Invalid coefficients: {coefficient_string}")
+        return [1.0]
 
-parse_clicked = st.button("Generate Plots", type="primary", use_container_width=True)
+# Generate button
+generate_clicked = st.button("Generate Plots", type="primary", use_container_width=True)
 
 # Process input
-if parse_clicked or ('tf_input' in st.session_state and st.session_state.tf_input == tf_input):
+if generate_clicked:
     try:
-        num_coeffs, den_coeffs = parse_transfer_function(tf_input)
+        # Parse coefficients
+        num_coeffs = parse_coeffs(num_input)
+        den_coeffs = parse_coeffs(den_input)
         
-        # Store in session state
-        st.session_state.tf_input = tf_input
-        st.session_state.num_coeffs = num_coeffs
-        st.session_state.den_coeffs = den_coeffs
+        # Show what we got
+        st.success("✓ Coefficients parsed successfully!")
         
-        # Show what was parsed
-        st.success("✓ Transfer function parsed successfully!")
-        
-        # Display polynomial in readable format
-        def format_poly(coeffs):
-            terms = []
+        # Display the transfer function
+        def format_poly(coeffs, var='s'):
+            """Format coefficients as polynomial string"""
             n = len(coeffs)
+            terms = []
             for i, coeff in enumerate(coeffs):
                 if abs(coeff) > 1e-10:
                     power = n - i - 1
                     if power == 0:
                         terms.append(f"{coeff:.4g}")
                     elif power == 1:
-                        terms.append(f"{coeff:.4g}s")
+                        terms.append(f"{coeff:.4g}{var}")
                     else:
-                        terms.append(f"{coeff:.4g}s^{power}")
+                        terms.append(f"{coeff:.4g}{var}^{power}")
             if not terms:
                 return "0"
             return " + ".join(terms).replace("+ -", "- ")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.info(f"**Numerator:** {format_poly(num_coeffs)}")
-        with col2:
-            st.info(f"**Denominator:** {format_poly(den_coeffs)}")
+        st.markdown(f"**Transfer Function:**")
+        st.markdown(f"$$G(s) = \\frac{{{format_poly(num_coeffs)}}}{{{format_poly(den_coeffs)}}}$$")
         
-        # Create visualizer with user-defined frequency range
+        # Create visualizer
         visualizer = NyquistVisualizer(num=num_coeffs, den=den_coeffs, 
                                       min_freq=min_freq, max_freq=max_freq)
         
@@ -610,7 +443,7 @@ if parse_clicked or ('tf_input' in st.session_state and st.session_state.tf_inpu
             with col2:
                 num_frames = st.slider("Number of frames", 20, 60, 40)
             
-            if st.button("🎬 Generate Animation", type="primary", use_container_width=True):
+            if st.button("🎬 Generate Animation", type="primary", use_container_width=True, key="anim_btn"):
                 with st.spinner("Creating animation..."):
                     gif_buffer = visualizer.create_fast_animation(num_frames)
                     
@@ -664,39 +497,29 @@ if parse_clicked or ('tf_input' in st.session_state and st.session_state.tf_inpu
     
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
-        
-        # Show helpful examples
-        st.info("""
-        **Try these formats:**
-        
-        - Simple: `1/(s+1)`
-        - With gain: `20*(s^2+1)`
-        - With zero: `s*(s+100)`
-        - With parentheses: `(s+1)/(s^2+2*s+3)`
-        - Second order: `1/(s^2+0.5*s+1)`
-        
-        **Note:** Use `*` for multiplication, `^` or `**` for powers, parentheses for grouping.
-        """)
+        st.info("Make sure your coefficients are valid numbers separated by commas.")
 
-# Quick examples at the bottom
-st.markdown("---")
-st.markdown("### Quick Examples")
-
-examples = [
-    ("1/(s+1)", "First order system"),
-    ("20*(s^2+1)", "Gain × (s² + 1)"),
-    ("s*(s+100)", "s(s + 100)"),
-    ("(s+1)/(s^2+2*s+3)", "With zero in numerator"),
-    ("1/(s^2+0.5*s+1)", "Second order system"),
-]
-
-cols = st.columns(len(examples))
-for i, (example, desc) in enumerate(examples):
-    with cols[i]:
-        if st.button(example, key=f"ex_{i}", help=desc):
-            st.session_state.tf_input = example
-            st.rerun()
+# Quick help
+with st.expander("📋 How to enter coefficients"):
+    st.markdown("""
+    **Coefficient Format:**
+    
+    Enter coefficients from highest power to constant term, separated by commas.
+    
+    **Examples:**
+    
+    | System | Transfer Function | Numerator | Denominator |
+    |--------|-------------------|-----------|-------------|
+    | First order | 1/(s+1) | `1` | `1, 1` |
+    | Second order | 1/(s²+0.5s+1) | `1` | `1, 0.5, 1` |
+    | Integrator | 1/s | `1` | `1, 0` |
+    | Differentiator | s | `1, 0` | `1` |
+    | 20*(s²+1) | 20s²+20 | `20, 0, 20` | `1` |
+    | s*(s+100) | s²+100s | `1, 100, 0` | `1` |
+    
+    **Note:** The denominator must have at least one non-zero coefficient.
+    """)
 
 # Requirements info
-with st.expander("Installation requirements"):
+with st.expander("🔧 Installation"):
     st.code("pip install streamlit numpy matplotlib scipy pillow")
