@@ -16,6 +16,16 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize session state
+if 'visualizer' not in st.session_state:
+    st.session_state.visualizer = None
+if 'num_coeffs' not in st.session_state:
+    st.session_state.num_coeffs = None
+if 'den_coeffs' not in st.session_state:
+    st.session_state.den_coeffs = None
+if 'show_animation' not in st.session_state:
+    st.session_state.show_animation = False
+
 class NyquistVisualizer:
     def __init__(self, num=None, den=None, min_freq=-2, max_freq=2):
         if num is not None and den is not None:
@@ -279,7 +289,24 @@ class NyquistVisualizer:
 # Main App
 st.title("📈 Bode & Nyquist Visualizer")
 
-# Input section - NO PARSER, JUST COEFFICIENTS
+# Parse coefficients function
+def parse_coeffs(coefficient_string):
+    """Parse comma-separated coefficients into list of floats"""
+    if not coefficient_string:
+        return [1.0]
+    
+    # Remove brackets if present
+    coeff_str = coefficient_string.strip("[]")
+    
+    # Split by comma and convert to float
+    try:
+        coeffs = [float(x.strip()) for x in coeff_str.split(',') if x.strip()]
+        return coeffs if coeffs else [1.0]
+    except ValueError:
+        st.error(f"Invalid coefficients: {coefficient_string}")
+        return [1.0]
+
+# Input section
 st.markdown("### Enter Transfer Function Coefficients")
 
 col1, col2 = st.columns(2)
@@ -287,26 +314,37 @@ col1, col2 = st.columns(2)
 with col1:
     st.markdown("**Numerator Coefficients**")
     st.markdown("Enter coefficients for highest to lowest power of s")
-    st.markdown("*Example: For 20*(s² + 1) = 20s² + 0s + 20, enter: 20, 0, 20*")
+    
+    # Use session state to remember the input
+    if 'num_input' not in st.session_state:
+        st.session_state.num_input = "1"
     
     num_input = st.text_input(
         "Numerator [aₙ, aₙ₋₁, ..., a₁, a₀]:",
-        value="1",
-        key="num_input",
+        value=st.session_state.num_input,
+        key="num_input_widget",
         help="Comma-separated coefficients, e.g., '1' for 1, '20,0,20' for 20s²+20"
     )
+    
+    # Update session state
+    st.session_state.num_input = num_input
 
 with col2:
     st.markdown("**Denominator Coefficients**")
     st.markdown("Enter coefficients for highest to lowest power of s")
-    st.markdown("*Example: For s² + 0.5s + 1, enter: 1, 0.5, 1*")
+    
+    if 'den_input' not in st.session_state:
+        st.session_state.den_input = "1, 1"
     
     den_input = st.text_input(
         "Denominator [bₘ, bₘ₋₁, ..., b₁, b₀]:",
-        value="1, 1",
-        key="den_input",
+        value=st.session_state.den_input,
+        key="den_input_widget",
         help="Comma-separated coefficients, e.g., '1,1' for s+1, '1,0.5,1' for s²+0.5s+1"
     )
+    
+    # Update session state
+    st.session_state.den_input = den_input
 
 # Sidebar for frequency range
 with st.sidebar:
@@ -315,23 +353,36 @@ with st.sidebar:
     
     col1, col2 = st.columns(2)
     with col1:
+        if 'min_freq' not in st.session_state:
+            st.session_state.min_freq = -2.0
+        
         min_freq = st.number_input("Min frequency (10^x)", 
-                                  value=-2.0, 
+                                  value=st.session_state.min_freq, 
                                   min_value=-5.0, 
                                   max_value=5.0, 
                                   step=0.5,
+                                  key="min_freq_input",
                                   help="Minimum frequency exponent (10^min)")
+        st.session_state.min_freq = min_freq
+        
     with col2:
+        if 'max_freq' not in st.session_state:
+            st.session_state.max_freq = 2.0
+        
         max_freq = st.number_input("Max frequency (10^x)", 
-                                  value=2.0, 
+                                  value=st.session_state.max_freq, 
                                   min_value=-5.0, 
                                   max_value=5.0, 
                                   step=0.5,
+                                  key="max_freq_input",
                                   help="Maximum frequency exponent (10^max)")
+        st.session_state.max_freq = max_freq
     
     if min_freq >= max_freq:
         st.error("Minimum frequency must be less than maximum frequency")
         min_freq, max_freq = -2.0, 2.0
+        st.session_state.min_freq = min_freq
+        st.session_state.max_freq = max_freq
     
     st.markdown("---")
     st.markdown("### Quick Examples")
@@ -349,155 +400,166 @@ with st.sidebar:
         if st.button(f"{name}: {desc}", key=f"ex_{name}"):
             st.session_state.num_input = num_ex.strip("[]").replace(" ", "")
             st.session_state.den_input = den_ex.strip("[]").replace(" ", "")
+            st.session_state.visualizer = None  # Reset visualizer
             st.rerun()
 
-# Parse coefficients
-def parse_coeffs(coefficient_string):
-    """Parse comma-separated coefficients into list of floats"""
-    if not coefficient_string:
-        return [1.0]
-    
-    # Remove brackets if present
-    coeff_str = coefficient_string.strip("[]")
-    
-    # Split by comma and convert to float
-    try:
-        coeffs = [float(x.strip()) for x in coeff_str.split(',') if x.strip()]
-        return coeffs if coeffs else [1.0]
-    except ValueError:
-        st.error(f"Invalid coefficients: {coefficient_string}")
-        return [1.0]
-
-# Generate button
-generate_clicked = st.button("Generate Plots", type="primary", use_container_width=True)
-
-# Process input
-if generate_clicked:
+# Main generate button
+if st.button("Generate Plots", type="primary", use_container_width=True):
     try:
         # Parse coefficients
-        num_coeffs = parse_coeffs(num_input)
-        den_coeffs = parse_coeffs(den_input)
+        num_coeffs = parse_coeffs(st.session_state.num_input)
+        den_coeffs = parse_coeffs(st.session_state.den_input)
         
-        # Show what we got
-        st.success("✓ Coefficients parsed successfully!")
+        # Store in session state
+        st.session_state.num_coeffs = num_coeffs
+        st.session_state.den_coeffs = den_coeffs
         
-        # Display the transfer function
-        def format_poly(coeffs, var='s'):
-            """Format coefficients as polynomial string"""
-            n = len(coeffs)
-            terms = []
-            for i, coeff in enumerate(coeffs):
-                if abs(coeff) > 1e-10:
-                    power = n - i - 1
-                    if power == 0:
-                        terms.append(f"{coeff:.4g}")
-                    elif power == 1:
-                        terms.append(f"{coeff:.4g}{var}")
-                    else:
-                        terms.append(f"{coeff:.4g}{var}^{power}")
-            if not terms:
-                return "0"
-            return " + ".join(terms).replace("+ -", "- ")
+        # Create and store visualizer
+        st.session_state.visualizer = NyquistVisualizer(
+            num=num_coeffs, 
+            den=den_coeffs, 
+            min_freq=st.session_state.min_freq, 
+            max_freq=st.session_state.max_freq
+        )
         
-        st.markdown(f"**Transfer Function:**")
-        st.markdown(f"$$G(s) = \\frac{{{format_poly(num_coeffs)}}}{{{format_poly(den_coeffs)}}}$$")
+        # Reset animation flag
+        st.session_state.show_animation = False
         
-        # Create visualizer
-        visualizer = NyquistVisualizer(num=num_coeffs, den=den_coeffs, 
-                                      min_freq=min_freq, max_freq=max_freq)
+        # Show success
+        st.success("✓ Plots generated successfully!")
         
-        # Tabs for different views
-        tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Nyquist Construction"])
-        
-        with tab1:
-            fig_bode = visualizer.plot_bode()
-            st.pyplot(fig_bode)
-            plt.close(fig_bode)
-            
-            st.info(f"Frequency range: 10^{{{min_freq}}} to 10^{{{max_freq}}} rad/s")
-        
-        with tab2:
-            fig_nyquist = visualizer.plot_complete_nyquist()
-            st.pyplot(fig_nyquist)
-            plt.close(fig_nyquist)
-            
-            with st.expander("Stability Information"):
-                st.markdown("""
-                **Nyquist Stability Criterion:**
-                
-                The **(-1, 0)** point (marked in red) is critical for stability analysis.
-                
-                1. **Clockwise encirclements** of (-1, 0) indicate **instability**
-                2. **No encirclement** → system is stable (if open-loop stable)
-                3. **Number of encirclements** = number of unstable poles
-                
-                The plot shows both positive frequencies (solid line) and 
-                negative frequencies (dashed line, complex conjugate).
-                """)
-        
-        with tab3:
-            st.markdown("### Nyquist Construction Animation")
-            st.markdown("Watch how the Bode magnitude and phase combine to form the Nyquist plot.")
-            
-            col1, col2, col3 = st.columns([2, 1, 2])
-            with col2:
-                num_frames = st.slider("Number of frames", 20, 60, 40)
-            
-            if st.button("🎬 Generate Animation", type="primary", use_container_width=True, key="anim_btn"):
-                with st.spinner("Creating animation..."):
-                    gif_buffer = visualizer.create_fast_animation(num_frames)
-                    
-                    if gif_buffer:
-                        # Display the GIF
-                        st.markdown("### Construction Animation")
-                        
-                        # Convert to base64 for embedding
-                        gif_base64 = base64.b64encode(gif_buffer.read()).decode()
-                        gif_buffer.seek(0)
-                        
-                        # Display with HTML (centered)
-                        st.markdown(
-                            f'<div style="text-align: center;">'
-                            f'<img src="data:image/gif;base64,{gif_base64}" alt="nyquist animation" width="800">'
-                            f'</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Download button
-                        col1, col2, col3 = st.columns([1, 2, 1])
-                        with col2:
-                            st.download_button(
-                                "⬇️ Download GIF",
-                                data=gif_buffer,
-                                file_name="nyquist_construction.gif",
-                                mime="image/gif",
-                                use_container_width=True
-                            )
-                    else:
-                        st.error("Could not create animation. Make sure pillow is installed: pip install pillow")
-            
-            # Explanation
-            with st.expander("How to interpret the animation"):
-                st.markdown("""
-                **Animation Elements:**
-                
-                - **Blue circle**: Radius equals the magnitude |G(jω)| from Bode plot
-                - **Red dashed line**: Angle equals the phase ∠G(jω) from Bode plot  
-                - **Green point**: Intersection = G(jω) in complex plane
-                - **Green line**: Traces the complete Nyquist plot as ω increases
-                
-                **What's happening:**
-                1. As frequency ω increases, the magnitude and phase change
-                2. The blue circle grows/shrinks based on magnitude
-                3. The red line rotates based on phase
-                4. Their intersection traces the Nyquist plot
-                
-                This shows how frequency response (Bode) transforms to complex plane (Nyquist).
-                """)
-    
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
         st.info("Make sure your coefficients are valid numbers separated by commas.")
+
+# If we have a visualizer in session state, show the plots
+if st.session_state.visualizer is not None:
+    visualizer = st.session_state.visualizer
+    
+    # Display the transfer function
+    def format_poly(coeffs, var='s'):
+        """Format coefficients as polynomial string"""
+        n = len(coeffs)
+        terms = []
+        for i, coeff in enumerate(coeffs):
+            if abs(coeff) > 1e-10:
+                power = n - i - 1
+                if power == 0:
+                    terms.append(f"{coeff:.4g}")
+                elif power == 1:
+                    terms.append(f"{coeff:.4g}{var}")
+                else:
+                    terms.append(f"{coeff:.4g}{var}^{power}")
+        if not terms:
+            return "0"
+        return " + ".join(terms).replace("+ -", "- ")
+    
+    st.markdown(f"**Transfer Function:**")
+    st.markdown(f"$$G(s) = \\frac{{{format_poly(st.session_state.num_coeffs)}}}{{{format_poly(st.session_state.den_coeffs)}}}$$")
+    
+    # Tabs for different views
+    tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Nyquist Construction"])
+    
+    with tab1:
+        fig_bode = visualizer.plot_bode()
+        st.pyplot(fig_bode)
+        plt.close(fig_bode)
+        
+        st.info(f"Frequency range: 10^{{{st.session_state.min_freq}}} to 10^{{{st.session_state.max_freq}}} rad/s")
+    
+    with tab2:
+        fig_nyquist = visualizer.plot_complete_nyquist()
+        st.pyplot(fig_nyquist)
+        plt.close(fig_nyquist)
+        
+        with st.expander("Stability Information"):
+            st.markdown("""
+            **Nyquist Stability Criterion:**
+            
+            The **(-1, 0)** point (marked in red) is critical for stability analysis.
+            
+            1. **Clockwise encirclements** of (-1, 0) indicate **instability**
+            2. **No encirclement** → system is stable (if open-loop stable)
+            3. **Number of encirclements** = number of unstable poles
+            
+            The plot shows both positive frequencies (solid line) and 
+            negative frequencies (dashed line, complex conjugate).
+            """)
+    
+    with tab3:
+        st.markdown("### Nyquist Construction Animation")
+        st.markdown("Watch how the Bode magnitude and phase combine to form the Nyquist plot.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if 'num_frames' not in st.session_state:
+                st.session_state.num_frames = 40
+            
+            num_frames = st.slider("Number of frames", 20, 60, st.session_state.num_frames, key="num_frames_slider")
+            st.session_state.num_frames = num_frames
+        
+        with col2:
+            if st.button("🎬 Generate Animation", type="primary", use_container_width=True, key="anim_btn"):
+                st.session_state.show_animation = True
+        
+        # Show animation if flag is set
+        if st.session_state.show_animation:
+            with st.spinner("Creating animation..."):
+                gif_buffer = visualizer.create_fast_animation(st.session_state.num_frames)
+                
+                if gif_buffer:
+                    # Display the GIF
+                    st.markdown("### Construction Animation")
+                    
+                    # Convert to base64 for embedding
+                    gif_base64 = base64.b64encode(gif_buffer.read()).decode()
+                    gif_buffer.seek(0)
+                    
+                    # Display with HTML (centered)
+                    st.markdown(
+                        f'<div style="text-align: center;">'
+                        f'<img src="data:image/gif;base64,{gif_base64}" alt="nyquist animation" width="800">'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Download button
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        st.download_button(
+                            "⬇️ Download GIF",
+                            data=gif_buffer,
+                            file_name="nyquist_construction.gif",
+                            mime="image/gif",
+                            use_container_width=True
+                        )
+                else:
+                    st.error("Could not create animation. Make sure pillow is installed: pip install pillow")
+        
+        # Always show explanation
+        with st.expander("How to interpret the animation"):
+            st.markdown("""
+            **Animation Elements:**
+            
+            - **Blue circle**: Radius equals the magnitude |G(jω)| from Bode plot
+            - **Red dashed line**: Angle equals the phase ∠G(jω) from Bode plot  
+            - **Green point**: Intersection = G(jω) in complex plane
+            - **Green line**: Traces the complete Nyquist plot as ω increases
+            
+            **What's happening:**
+            1. As frequency ω increases, the magnitude and phase change
+            2. The blue circle grows/shrinks based on magnitude
+            3. The red line rotates based on phase
+            4. Their intersection traces the Nyquist plot
+            
+            This shows how frequency response (Bode) transforms to complex plane (Nyquist).
+            """)
+
+# Clear button to reset everything
+if st.button("Clear All", type="secondary"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
 # Quick help
 with st.expander("📋 How to enter coefficients"):
