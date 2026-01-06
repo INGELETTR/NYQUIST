@@ -2,12 +2,9 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import signal
+import re
 import warnings
 warnings.filterwarnings('ignore')
-import base64
-from io import BytesIO
-import tempfile
-from pathlib import Path
 
 # Set page config
 st.set_page_config(
@@ -16,15 +13,221 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for clean look
-st.markdown("""
-<style>
-    .stTextInput>div>div>input {
-        font-family: 'Courier New', monospace;
-        font-size: 14px;
-    }
-</style>
-""", unsafe_allow_html=True)
+def parse_transfer_function(tf_str):
+    """
+    Proper transfer function parser that handles multiplication and parentheses
+    """
+    # Clean input
+    tf_str = tf_str.replace(' ', '').replace('^', '**')
+    
+    # Handle multiplication signs
+    tf_str = re.sub(r'(\d)([a-zA-Z\(])', r'\1*\2', tf_str)  # 5s -> 5*s
+    tf_str = re.sub(r'([a-zA-Z\)])(\d)', r'\1*\2', tf_str)  # s5 -> s*5
+    tf_str = re.sub(r'\)([a-zA-Z\(])', r')*\1', tf_str)     # )( -> )*(
+    
+    # Handle implicit multiplication
+    tf_str = re.sub(r'(\d)(s)', r'\1*\2', tf_str)
+    tf_str = re.sub(r'(s)(\d)', r'\1*\2', tf_str)
+    
+    # Check if there's a denominator
+    if '/' in tf_str:
+        num_str, den_str = tf_str.split('/')
+    else:
+        num_str = tf_str
+        den_str = "1"
+    
+    # Parse polynomials
+    num_coeffs = parse_polynomial(num_str)
+    den_coeffs = parse_polynomial(den_str)
+    
+    return num_coeffs, den_coeffs
+
+def parse_polynomial(expr):
+    """
+    Parse polynomial expression to coefficients using sympy-like evaluation
+    """
+    # If it's just a number
+    if 's' not in expr:
+        return [float(expr)]
+    
+    # Handle multiplication with parentheses
+    expr = expand_expression(expr)
+    
+    # Find all terms with 's'
+    terms = re.split(r'([+-])', expr)
+    if terms[0] == '':
+        terms = terms[1:]
+    
+    # Find highest power
+    max_power = 0
+    for term in terms:
+        if term in ['+', '-']:
+            continue
+        if 's**' in term:
+            match = re.search(r's\*\*(\d+)', term)
+            if match:
+                power = int(match.group(1))
+                max_power = max(max_power, power)
+        elif term.endswith('s') or (term.endswith('*s') and '*' in term):
+            max_power = max(max_power, 1)
+    
+    # Initialize coefficients
+    coeffs = [0.0] * (max_power + 1)
+    
+    # Process terms
+    current_sign = '+'
+    for term in terms:
+        if term == '+' or term == '-':
+            current_sign = term
+            continue
+        
+        # Get coefficient and power
+        if 's**' in term:
+            # Term like 2*s**2
+            coeff_part = term.split('*s**')[0]
+            if coeff_part == '':
+                coeff = 1.0
+            elif coeff_part == '-':
+                coeff = -1.0
+                current_sign = '+'
+            elif coeff_part == '+':
+                coeff = 1.0
+                current_sign = '+'
+            else:
+                coeff = float(coeff_part) if coeff_part else 1.0
+            power = int(term.split('**')[-1])
+        elif '*s' in term:
+            # Term like 2*s
+            coeff_part = term.split('*s')[0]
+            coeff = float(coeff_part) if coeff_part else 1.0
+            power = 1
+        elif term.endswith('s'):
+            # Term like 2s (after expansion)
+            coeff_part = term[:-1]
+            coeff = float(coeff_part) if coeff_part else 1.0
+            power = 1
+        else:
+            # Constant term
+            coeff = float(term)
+            power = 0
+        
+        # Apply sign
+        if current_sign == '-':
+            coeff = -coeff
+        
+        # Store coefficient
+        coeffs[max_power - power] = coeff
+    
+    return coeffs
+
+def expand_expression(expr):
+    """
+    Expand expressions like 20*(s**2+1) to 20*s**2 + 20
+    """
+    # Remove parentheses by distributing multiplication
+    while '(' in expr and ')' in expr:
+        # Find innermost parentheses
+        start = expr.rfind('(')
+        end = expr.find(')', start)
+        
+        if start == -1 or end == -1:
+            break
+        
+        inner = expr[start+1:end]
+        
+        # Check if there's a multiplication before the parenthesis
+        if start > 0 and expr[start-1] == '*':
+            # Find the multiplier
+            multiplier_start = start - 1
+            while multiplier_start > 0 and expr[multiplier_start-1].isdigit():
+                multiplier_start -= 1
+            
+            if multiplier_start > 0 and expr[multiplier_start-1] == '-':
+                multiplier_start -= 1
+            elif multiplier_start > 0 and expr[multiplier_start-1] == '+':
+                multiplier_start -= 1
+            
+            multiplier = expr[multiplier_start:start-1]  # Exclude the '*'
+            
+            if multiplier == '':
+                multiplier = '1'
+            elif multiplier == '-':
+                multiplier = '-1'
+            elif multiplier == '+':
+                multiplier = '1'
+            
+            # Distribute the multiplier
+            distributed = distribute_multiplier(inner, multiplier)
+            expr = expr[:multiplier_start] + distributed + expr[end+1:]
+        else:
+            # No multiplication, just remove parentheses
+            expr = expr[:start] + inner + expr[end+1:]
+    
+    return expr
+
+def distribute_multiplier(inner, multiplier):
+    """
+    Distribute a multiplier across terms in parentheses
+    """
+    # Split inner expression into terms
+    terms = re.split(r'([+-])', inner)
+    if terms[0] == '':
+        terms = terms[1:]
+    
+    result_terms = []
+    current_sign = '+'
+    
+    for term in terms:
+        if term in ['+', '-']:
+            current_sign = term
+            continue
+        
+        # Handle sign for the term
+        term_sign = current_sign
+        
+        # Multiply the term by the multiplier
+        if term == '':
+            continue
+        
+        # Handle cases where term is just 's'
+        if term == 's':
+            term = '1*s'
+        
+        # Extract coefficient if any
+        if '*' in term:
+            coeff_part, var_part = term.split('*', 1)
+        elif term.endswith('s'):
+            coeff_part = term[:-1]
+            var_part = 's'
+        else:
+            coeff_part = term
+            var_part = ''
+        
+        # Calculate new coefficient
+        if coeff_part == '':
+            coeff = 1.0
+        else:
+            coeff = float(coeff_part)
+        
+        # Apply multiplier
+        new_coeff = coeff * float(multiplier)
+        
+        # Apply term sign
+        if term_sign == '-':
+            new_coeff = -new_coeff
+        
+        # Build new term
+        if var_part:
+            result_terms.append(f"{new_coeff:+g}*{var_part}")
+        else:
+            result_terms.append(f"{new_coeff:+g}")
+    
+    # Join terms, remove leading '+'
+    result = ''.join(result_terms)
+    if result.startswith('+'):
+        result = result[1:]
+    
+    return result
 
 class FastNyquistVisualizer:
     def __init__(self, num=None, den=None):
@@ -33,14 +236,14 @@ class FastNyquistVisualizer:
         else:
             raise ValueError("Must provide num and den coefficients")
         
-        # Reduced frequency points for speed
+        # Frequency range
         self.w = np.logspace(-2, 2, 400)
         
         # Calculate frequency response
         self.w, self.mag, self.phase = signal.bode(self.sys, self.w)
         self.mag_linear = 10**(self.mag / 20)
         
-        # Pre-calculate Nyquist points (vectorized)
+        # Pre-calculate Nyquist points
         phase_rad = np.radians(self.phase)
         self.nyquist_real = self.mag_linear * np.cos(phase_rad)
         self.nyquist_imag = self.mag_linear * np.sin(phase_rad)
@@ -79,161 +282,35 @@ class FastNyquistVisualizer:
         
         plt.tight_layout()
         return fig
-    
-    def create_construction_frames(self, num_frames=30):
-        """Create static frames showing construction - much faster than animation"""
-        frames = []
-        
-        # Select evenly spaced indices
-        indices = np.linspace(0, len(self.w)-1, num_frames, dtype=int)
-        
-        for idx in indices:
-            fig = plt.figure(figsize=(14, 5))
-            
-            # Get current values
-            freq = self.w[idx]
-            mag_db = self.mag[idx]
-            mag_lin = self.mag_linear[idx]
-            phase_deg = self.phase[idx]
-            phase_rad = np.radians(phase_deg)
-            
-            # Create subplots
-            ax1 = plt.subplot(1, 3, 1)
-            ax2 = plt.subplot(1, 3, 2)
-            ax3 = plt.subplot(1, 3, 3)
-            
-            # Bode Magnitude
-            ax1.semilogx(self.w, self.mag, 'b', alpha=0.3, linewidth=1)
-            ax1.plot(freq, mag_db, 'bo', markersize=6)
-            ax1.set_title(f'Bode - Magnitude\nf = {freq:.2f} rad/s')
-            ax1.set_ylabel('Magnitude [dB]')
-            ax1.grid(True, alpha=0.3)
-            
-            # Bode Phase
-            ax2.semilogx(self.w, self.phase, 'r', alpha=0.3, linewidth=1)
-            ax2.plot(freq, phase_deg, 'ro', markersize=6)
-            ax2.set_title(f'Bode - Phase\n∠ = {phase_deg:.0f}°')
-            ax2.set_ylabel('Phase [deg]')
-            ax2.set_xlabel('Frequency [rad/s]')
-            ax2.grid(True, alpha=0.3)
-            
-            # Nyquist Construction
-            ax3.set_aspect('equal')
-            ax3.grid(True, alpha=0.3)
-            ax3.axhline(y=0, color='k', alpha=0.3)
-            ax3.axvline(x=0, color='k', alpha=0.3)
-            
-            # Circle for amplitude
-            circle = plt.Circle((0, 0), mag_lin, fill=False, color='blue', alpha=0.5)
-            ax3.add_patch(circle)
-            
-            # Phase line
-            x_end = mag_lin * np.cos(phase_rad)
-            y_end = mag_lin * np.sin(phase_rad)
-            ax3.plot([0, x_end], [0, y_end], 'r--', alpha=0.7)
-            
-            # Current point
-            ax3.plot(x_end, y_end, 'go', markersize=8, markeredgecolor='k')
-            
-            # Trajectory so far
-            ax3.plot(self.nyquist_real[:idx+1], self.nyquist_imag[:idx+1], 'g-', alpha=0.7)
-            
-            ax3.set_title(f'Nyquist Construction\n|G| = {mag_lin:.2f}')
-            ax3.set_xlabel('Real')
-            ax3.set_ylabel('Imaginary')
-            
-            plt.tight_layout()
-            frames.append(fig)
-        
-        return frames
-
-def parse_transfer_function(tf_str):
-    tf_str = tf_str.replace(' ', '').lower()
-    
-    if '/' in tf_str:
-        num_str, den_str = tf_str.split('/')
-    else:
-        num_str = tf_str
-        den_str = "1"
-    
-    if num_str.startswith('(') and num_str.endswith(')'):
-        num_str = num_str[1:-1]
-    if den_str.startswith('(') and den_str.endswith(')'):
-        den_str = den_str[1:-1]
-    
-    num_coeffs = parse_polynomial(num_str)
-    den_coeffs = parse_polynomial(den_str)
-    
-    return num_coeffs, den_coeffs
-
-def parse_polynomial(poly_str):
-    if 's' not in poly_str:
-        return [float(poly_str)]
-    
-    poly_str = poly_str.replace('(', '').replace(')', '').replace('*', '')
-    
-    import re
-    terms = re.split('([+-])', poly_str)
-    
-    reconstructed_terms = []
-    current_sign = '+'
-    for term in terms:
-        if term == '+' or term == '-':
-            current_sign = term
-        elif term:
-            if current_sign == '-':
-                reconstructed_terms.append('-' + term)
-            else:
-                reconstructed_terms.append(term)
-    
-    max_power = 0
-    for term in reconstructed_terms:
-        if 's^' in term:
-            power = int(term.split('s^')[1])
-            max_power = max(max_power, power)
-        elif 's' in term and '^' not in term:
-            max_power = max(max_power, 1)
-    
-    coeffs = [0.0] * (max_power + 1)
-    
-    for term in reconstructed_terms:
-        sign = 1
-        if term.startswith('-'):
-            sign = -1
-            term = term[1:]
-        
-        if 's^' in term:
-            coeff_part, power_part = term.split('s^')
-            power = int(power_part)
-            coeff = float(coeff_part) if coeff_part else 1.0
-        elif 's' in term:
-            coeff_part = term.split('s')[0]
-            coeff = float(coeff_part) if coeff_part else 1.0
-            power = 1
-        else:
-            coeff = float(term)
-            power = 0
-        
-        coeffs[max_power - power] = sign * coeff
-    
-    return coeffs
 
 # Main App
 st.title("📈 Bode & Nyquist Visualizer")
 
-# Input section - clean and centered
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.markdown("### Enter Transfer Function")
-    
-    # Input with examples
-    tf_input = st.text_input(
-        "Transfer Function (s-domain):",
-        value="1/(s+1)",
-        help="Examples: 1/(s+1), 1/(s^2+0.5*s+1), (s+1)/(s^2+2*s+3)"
-    )
-    
-    parse_clicked = st.button("Generate Plots", type="primary")
+# Input section
+st.markdown("### Enter Transfer Function")
+tf_input = st.text_input(
+    "Transfer Function (s-domain):",
+    value="20*(s^2+1)",
+    help="Examples: 20*(s^2+1), s*(s+100), 1/(s+1), 1/(s^2+0.5*s+1)"
+)
+
+parse_clicked = st.button("Generate Plots", type="primary")
+
+# Test the parser
+if st.checkbox("Show parser debug info"):
+    st.write("Testing parser with your input:")
+    try:
+        num, den = parse_transfer_function(tf_input)
+        st.write(f"Parsed numerator: {num}")
+        st.write(f"Parsed denominator: {den}")
+        
+        # Show expanded form
+        st.write("Expanded transfer function:")
+        num_poly = " + ".join([f"{c:.2f}s^{len(num)-i-1}" for i, c in enumerate(num) if c != 0])
+        den_poly = " + ".join([f"{c:.2f}s^{len(den)-i-1}" for i, c in enumerate(den) if c != 0])
+        st.write(f"G(s) = ({num_poly}) / ({den_poly})")
+    except Exception as e:
+        st.error(f"Parser error: {e}")
 
 # Process input
 if parse_clicked or ('tf_input' in st.session_state and st.session_state.tf_input == tf_input):
@@ -245,18 +322,19 @@ if parse_clicked or ('tf_input' in st.session_state and st.session_state.tf_inpu
         st.session_state.num_coeffs = num_coeffs
         st.session_state.den_coeffs = den_coeffs
         
+        # Display what was parsed
+        st.success("✓ Successfully parsed transfer function!")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"**Numerator coefficients:** {num_coeffs}")
+        with col2:
+            st.info(f"**Denominator coefficients:** {den_coeffs}")
+        
         # Create visualizer
         visualizer = FastNyquistVisualizer(num=num_coeffs, den=den_coeffs)
         
-        # Display parsed coefficients
-        col1, col2 = st.columns(2)
-        with col1:
-            st.info(f"**Numerator:** {num_coeffs}")
-        with col2:
-            st.info(f"**Denominator:** {den_coeffs}")
-        
         # Tabs for visualizations
-        tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Construction", "Nyquist Diagram"])
+        tab1, tab2 = st.tabs(["Bode Plot", "Nyquist Diagram"])
         
         with tab1:
             fig_bode = visualizer.plot_bode()
@@ -264,77 +342,45 @@ if parse_clicked or ('tf_input' in st.session_state and st.session_state.tf_inpu
             plt.close(fig_bode)
         
         with tab2:
-            st.markdown("### Nyquist Construction Steps")
-            
-            # Simple controls
-            num_frames = st.slider("Number of steps to show:", 5, 20, 10)
-            
-            if st.button("Show Construction", key="construct"):
-                with st.spinner("Generating..."):
-                    frames = visualizer.create_construction_frames(num_frames)
-                    
-                    # Display frames in a grid
-                    cols = st.columns(2)
-                    for i, fig in enumerate(frames):
-                        with cols[i % 2]:
-                            st.pyplot(fig)
-                            plt.close(fig)
-        
-        with tab3:
             fig_nyquist = visualizer.plot_complete_nyquist()
             st.pyplot(fig_nyquist)
             plt.close(fig_nyquist)
-            
-            # Stability info
-            with st.expander("Stability Information"):
-                st.markdown("""
-                The **(-1, 0)** point is critical for stability analysis.
-                
-                **Nyquist Criterion:**
-                - Closed-loop stability depends on encirclements of (-1, 0)
-                - Clockwise encirclements indicate instability
-                - No encirclement → stable if open-loop is stable
-                """)
     
     except Exception as e:
-        st.error(f"Error: {str(e)}")
-        st.info("Try examples like: 1/(s+1), 1/(s^2+0.5*s+1), (s+1)/(s^2+2*s+3)")
+        st.error(f"❌ Error: {str(e)}")
+        st.info("""
+        **Common formats that work:**
+        - `20*(s^2+1)`
+        - `s*(s+100)`  
+        - `1/(s+1)`
+        - `1/(s^2+0.5*s+1)`
+        - `(s+1)/(s^2+2*s+3)`
+        - `s^2+3*s+2`
+        """)
 
-# Initial state or examples
-elif not parse_clicked:
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("**Examples:**")
-        st.code("1/(s+1)")
-        if st.button("Try this", key="ex1"):
-            st.session_state.tf_input = "1/(s+1)"
-            st.rerun()
-    
-    with col2:
-        st.markdown("**Examples:**")
-        st.code("1/(s^2+0.5*s+1)")
-        if st.button("Try this", key="ex2"):
-            st.session_state.tf_input = "1/(s^2+0.5*s+1)"
-            st.rerun()
-    
-    with col3:
-        st.markdown("**Examples:**")
-        st.code("(s+1)/(s^2+2*s+3)")
-        if st.button("Try this", key="ex3"):
-            st.session_state.tf_input = "(s+1)/(s^2+2*s+3)"
-            st.rerun()
-    
-    st.markdown("""
-    **Enter a transfer function in s-domain format above.**
-    
-    Format examples:
-    - `1/(s+1)` - First order system
-    - `1/(s^2+0.5*s+1)` - Second order system
-    - `(s+1)/(s^2+2*s+3)` - System with zeros
-    """)
-
-# Footer
+# Quick examples
 st.markdown("---")
-st.caption("Control Systems Visualization Tool")
+st.markdown("**Quick examples:**")
+
+examples = [
+    ("20*(s^2+1)", "Gain * (s² + 1)"),
+    ("s*(s+100)", "s(s + 100)"),
+    ("1/(s+1)", "First order"),
+    ("1/(s^2+0.5*s+1)", "Second order"),
+    ("(s+1)/(s^2+2*s+3)", "With zero"),
+]
+
+cols = st.columns(len(examples))
+for i, (example, desc) in enumerate(examples):
+    with cols[i]:
+        if st.button(f"{example}\n{desc}", key=f"ex{i}"):
+            st.session_state.tf_input = example
+            st.rerun()
+
+st.markdown("""
+**Note:** The parser now correctly handles:
+- Multiplication: `20*(s^2+1)` → `20*s^2 + 20`
+- Parentheses: `s*(s+100)` → `s^2 + 100*s`
+- Powers: `s^2` or `s**2`
+- Mixed expressions: `(s+1)*(s+2)`
+""")
