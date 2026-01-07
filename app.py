@@ -150,7 +150,7 @@ class NyquistVisualizer:
         
         # Check if the plot goes to infinity (very large magnitude)
         max_mag = np.max(mag_linear_dense)
-        has_infinite_segments = max_mag > 1e3  # Arbitrary threshold for "infinity"
+        has_infinite_segments = max_mag > 1e2  # Arbitrary threshold for "infinity"
         
         fig, ax = plt.subplots(figsize=(8, 8))
         
@@ -753,3 +753,4 @@ with st.expander("📋 How to enter coefficients"):
 # Requirements info
 with st.expander("🔧 Installation"):
     st.code("pip install streamlit numpy matplotlib scipy pillow sympy")
+
