@@ -1,5 +1,4 @@
-[file name]: app.py
-[file content begin]
+
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -744,3 +743,4 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
+
