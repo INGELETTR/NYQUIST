@@ -43,29 +43,17 @@ class ControlVisualizer:
         self.num_coeffs = num
         self.den_coeffs = den
         
-        # Generate frequency array for Bode
+        # Generate frequency array
         self.w = np.logspace(min_freq, max_freq, 1000)
-        
-        # Calculate Bode plot data using control library
-        self.mag, self.phase, self.w_bode = ct.bode(self.sys, self.w, plot=False)
-        # Convert magnitude to dB
-        self.mag_db = 20 * np.log10(self.mag)
-        
-        # Get Nyquist data using control library
-        try:
-            # Try to get Nyquist data from control library
-            self.nyquist_real, self.nyquist_imag, self.nyquist_omega = ct.nyquist(self.sys, plot=False)
-        except:
-            # Fallback: compute manually
-            nyquist_response = self._compute_nyquist_response(self.w)
-            self.nyquist_real = np.real(nyquist_response)
-            self.nyquist_imag = np.imag(nyquist_response)
-            self.nyquist_omega = self.w
         
         # For animation (fewer points for speed)
         self.w_anim = np.logspace(min_freq, max_freq, 200)
-        self.mag_anim, self.phase_anim, _ = ct.bode(self.sys, self.w_anim, plot=False)
-        self.mag_db_anim = 20 * np.log10(self.mag_anim)
+        
+        # Get data for animation
+        mag_anim, phase_anim, _ = ct.bode(self.sys, self.w_anim, plot=False)
+        self.mag_anim = mag_anim
+        self.phase_anim = phase_anim
+        self.mag_db_anim = 20 * np.log10(mag_anim)
         
         # Calculate complex response for animation
         self.nyquist_response_anim = self._compute_nyquist_response(self.w_anim)
@@ -116,62 +104,104 @@ class ControlVisualizer:
             st.error(f"Error computing symbolic expressions: {str(e)}")
             return None, None, None
     
-    def plot_bode(self):
-        """Plot Bode diagram using control library's bode function"""
-        # Create figure
+    def plot_bode_native(self):
+        """Plot Bode diagram using control library's native plotting"""
+        try:
+            # Create a new figure and use control's bode_plot
+            fig = plt.figure(figsize=(10, 8))
+            
+            # Use control library's bode_plot with plot=True
+            # This will create the plot on the current figure
+            ct.bode_plot(self.sys, self.w, plot=True)
+            
+            # Get the current figure that was created by bode_plot
+            fig = plt.gcf()
+            fig.set_size_inches(10, 8)
+            
+            # Add title
+            fig.suptitle(f'Bode Diagram (Control Library)', fontsize=16)
+            
+            # Adjust layout
+            plt.tight_layout()
+            
+            return fig
+            
+        except Exception as e:
+            st.error(f"Error in native Bode plot: {str(e)}")
+            # Fallback to manual plotting
+            return self._plot_bode_fallback()
+    
+    def _plot_bode_fallback(self):
+        """Fallback Bode plot if native plotting fails"""
+        mag, phase, w = ct.bode(self.sys, self.w, plot=False)
+        mag_db = 20 * np.log10(mag)
+        
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
         
-        # Use control library's bode function for proper plotting
         # Magnitude plot
-        ax1.semilogx(self.w_bode, self.mag_db, 'b', linewidth=2)
+        ax1.semilogx(w, mag_db, 'b', linewidth=2)
         ax1.set_ylabel('Magnitude [dB]', fontsize=12)
         ax1.grid(True, which='both', linestyle='--', alpha=0.5)
-        ax1.set_title(f'Bode Diagram (Control Library)', fontsize=14)
+        ax1.set_title(f'Bode Diagram (ω: 10^{{{self.min_freq}}} to 10^{{{self.max_freq}}} rad/s)', fontsize=14)
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
-        # Add magnitude grid lines
-        ax1.minorticks_on()
-        ax1.grid(True, which='major', linestyle='-', alpha=0.7)
-        ax1.grid(True, which='minor', linestyle=':', alpha=0.5)
-        
         # Phase plot
-        ax2.semilogx(self.w_bode, self.phase, 'r', linewidth=2)
+        ax2.semilogx(w, phase, 'r', linewidth=2)
         ax2.set_ylabel('Phase [deg]', fontsize=12)
         ax2.set_xlabel('Frequency [rad/s]', fontsize=12)
         ax2.grid(True, which='both', linestyle='--', alpha=0.5)
         ax2.set_title(f'Phase Response', fontsize=14)
         ax2.set_xlim([10**self.min_freq, 10**self.max_freq])
         
-        # Add phase grid lines
-        ax2.minorticks_on()
-        ax2.grid(True, which='major', linestyle='-', alpha=0.7)
-        ax2.grid(True, which='minor', linestyle=':', alpha=0.5)
-        
         plt.tight_layout()
         return fig
     
-    def plot_nyquist(self):
-        """Plot Nyquist diagram using control library's nyquist function"""
-        # Create figure
+    def plot_nyquist_native(self):
+        """Plot Nyquist diagram using control library's native plotting"""
+        try:
+            # Create a new figure
+            fig = plt.figure(figsize=(8, 8))
+            
+            # Use control library's nyquist_plot with plot=True
+            # This will create the plot on the current figure
+            ct.nyquist_plot(self.sys, omega=self.w, plot=True)
+            
+            # Get the current figure that was created by nyquist_plot
+            fig = plt.gcf()
+            fig.set_size_inches(8, 8)
+            
+            # Add title
+            fig.suptitle('Nyquist Diagram (Control Library)', fontsize=16)
+            
+            # Adjust layout
+            plt.tight_layout()
+            
+            return fig
+            
+        except Exception as e:
+            st.error(f"Error in native Nyquist plot: {str(e)}")
+            # Fallback to manual plotting
+            return self._plot_nyquist_fallback()
+    
+    def _plot_nyquist_fallback(self):
+        """Fallback Nyquist plot if native plotting fails"""
+        # Get Nyquist data
+        try:
+            reals, imags, _ = ct.nyquist(self.sys, self.w, plot=False)
+        except:
+            # Manual calculation if ct.nyquist fails
+            response = self._compute_nyquist_response(self.w)
+            reals, imags = np.real(response), np.imag(response)
+        
         fig, ax = plt.subplots(figsize=(8, 8))
         
-        # Plot the Nyquist curve from control library
-        ax.plot(self.nyquist_real, self.nyquist_imag, 'b-', linewidth=2, label='ω: 0 → ∞')
-        
-        # Also plot the mirror for negative frequencies (complex conjugate)
-        ax.plot(self.nyquist_real, -self.nyquist_imag, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
+        # Plot the Nyquist curve
+        ax.plot(reals, imags, 'b-', linewidth=2, label='ω: 0 → ∞')
+        ax.plot(reals, -imags, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
         
         # Mark (-1, 0) point
         ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, label='(-1, 0)', zorder=5)
         ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red', zorder=5)
-        
-        # Add arrow showing direction (if we have enough points)
-        if len(self.nyquist_real) > 10:
-            mid_idx = len(self.nyquist_real) // 2
-            ax.annotate('', 
-                       xy=(self.nyquist_real[mid_idx], self.nyquist_imag[mid_idx]),
-                       xytext=(self.nyquist_real[mid_idx-5], self.nyquist_imag[mid_idx-5]),
-                       arrowprops=dict(arrowstyle='->', color='blue', lw=1))
         
         # Set axis properties
         ax.grid(True, linestyle='--', alpha=0.5)
@@ -180,41 +210,23 @@ class ControlVisualizer:
         ax.set_xlabel('Real', fontsize=12)
         ax.set_ylabel('Imaginary', fontsize=12)
         ax.set_aspect('equal')
-        ax.set_title('Nyquist Diagram (Control Library)', fontsize=14)
+        ax.set_title('Nyquist Diagram', fontsize=14)
         
         # Set appropriate limits
-        self._set_nyquist_limits(ax)
+        self._set_nyquist_limits(ax, reals, imags)
         
         ax.legend(loc='best')
         plt.tight_layout()
         return fig
     
-    def _set_nyquist_limits(self, ax):
+    def _set_nyquist_limits(self, ax, reals, imags):
         """Set appropriate axis limits for Nyquist plot"""
         # Get data bounds
-        x_data = np.concatenate([self.nyquist_real, [-1, 1, 0]])
-        y_data = np.concatenate([self.nyquist_imag, [-1, 1, 0]])
+        x_data = np.concatenate([reals, [-1, 1, 0]])
+        y_data = np.concatenate([imags, [-1, 1, 0]])
         
-        # Check if we have large values (infinity case)
-        max_abs_real = np.max(np.abs(self.nyquist_real))
-        max_abs_imag = np.max(np.abs(self.nyquist_imag))
-        
-        if max_abs_real > 100 or max_abs_imag > 100:
-            # System goes to infinity - show reasonable window
-            # Find finite points
-            finite_mask = (np.abs(self.nyquist_real) < 100) & (np.abs(self.nyquist_imag) < 100)
-            
-            if np.any(finite_mask):
-                finite_real = self.nyquist_real[finite_mask]
-                finite_imag = self.nyquist_imag[finite_mask]
-                x_min, x_max = np.min(finite_real), np.max(finite_real)
-                y_min, y_max = np.min(finite_imag), np.max(finite_imag)
-            else:
-                x_min, x_max = -10, 10
-                y_min, y_max = -10, 10
-        else:
-            x_min, x_max = np.min(x_data), np.max(x_data)
-            y_min, y_max = np.min(y_data), np.max(y_data)
+        x_min, x_max = np.min(x_data), np.max(x_data)
+        y_min, y_max = np.min(y_data), np.max(y_data)
         
         # Add padding
         padding = 0.2
@@ -424,7 +436,7 @@ class ControlVisualizer:
             return None
 
 # Main App
-st.title("📈 Bode & Nyquist Visualizer (Control Library)")
+st.title("📈 Bode & Nyquist Visualizer (Control Library Native Plots)")
 
 # Parse coefficients function
 def parse_coeffs(coefficient_string):
@@ -616,14 +628,16 @@ if st.session_state.visualizer is not None:
     tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Animation"])
     
     with tab1:
-        fig_bode = visualizer.plot_bode()
+        st.markdown("### Bode Plot (Control Library Native)")
+        fig_bode = visualizer.plot_bode_native()
         st.pyplot(fig_bode)
         plt.close(fig_bode)
         
         st.info(f"Frequency range: 10^{{{st.session_state.min_freq}}} to 10^{{{st.session_state.max_freq}}} rad/s")
     
     with tab2:
-        fig_nyquist = visualizer.plot_nyquist()
+        st.markdown("### Nyquist Diagram (Control Library Native)")
+        fig_nyquist = visualizer.plot_nyquist_native()
         st.pyplot(fig_nyquist)
         plt.close(fig_nyquist)
         
@@ -637,10 +651,8 @@ if st.session_state.visualizer is not None:
             2. **No encirclement** → system is stable (if open-loop stable)
             3. **Number of encirclements** = number of unstable poles
             
-            The plot shows both positive frequencies (solid line) and 
-            negative frequencies (dashed line, complex conjugate).
-            
-            **Note:** The control library handles poles on the imaginary axis and infinity better.
+            **Note:** This plot is generated by the control library's native `nyquist_plot` function,
+            which properly handles poles on the imaginary axis and infinity.
             """)
     
     with tab3:
@@ -744,6 +756,6 @@ with st.expander("📋 How to enter coefficients"):
 with st.expander("🔧 Installation"):
     st.code("pip install streamlit numpy matplotlib control sympy pillow")
     st.markdown("""
-    **Note:** The `control` library is specifically designed for control systems and provides
-    better handling of Nyquist plots, especially for systems with poles on the imaginary axis.
+    **Note:** This version uses the control library's native plotting functions (`bode_plot` and `nyquist_plot`)
+    which provide professional-quality plots with proper handling of special cases.
     """)
