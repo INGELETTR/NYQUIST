@@ -106,7 +106,7 @@ class ControlVisualizer:
     
     def plot_bode(self):
         """Plot Bode diagram with custom styling"""
-        mag, phase, w = ct.bode(self.sys, self.w, plot=False)
+        mag, phase, w = ct.bode(self.sys, self.w, deg = True,plot=False)
         mag_db = 20 * np.log10(mag)
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
@@ -736,6 +736,7 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
+
 
 
 
