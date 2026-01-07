@@ -479,7 +479,7 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         if 'min_freq' not in st.session_state:
-            st.session_state.min_freq = -2.0
+            st.session_state.min_freq = -3.0
         
         min_freq = st.number_input("Min frequency (10^x)", 
                                   value=st.session_state.min_freq, 
@@ -492,7 +492,7 @@ with st.sidebar:
         
     with col2:
         if 'max_freq' not in st.session_state:
-            st.session_state.max_freq = 2.0
+            st.session_state.max_freq = 3.0
         
         max_freq = st.number_input("Max frequency (10^x)", 
                                   value=st.session_state.max_freq, 
@@ -736,6 +736,7 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
+
 
 
 
