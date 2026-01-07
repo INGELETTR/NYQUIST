@@ -66,7 +66,8 @@ class NyquistVisualizer:
         """Compute symbolic real and imaginary parts of G(jω)"""
         try:
             # Define symbols
-            s, omega = sp.symbols('s omega', real=True)
+            s = sp.symbols('s')
+            omega = sp.symbols('omega', real=True)
             
             # Create numerator and denominator polynomials
             num_poly = sum(c * s**i for i, c in enumerate(reversed(num_coeffs)))
@@ -75,12 +76,15 @@ class NyquistVisualizer:
             # Create transfer function
             G = num_poly / den_poly
             
-            # Substitute s = jω
-            G_jw = G.subs(s, sp.I * omega)
+            # Get G(jω) and simplify
+            G_jw = sp.simplify(G.subs(s, sp.I * omega))
             
-            # Separate real and imaginary parts
-            real_part = sp.simplify(sp.re(G_jw))
-            imag_part = sp.simplify(sp.im(G_jw))
+            # Use as_real_imag() method to separate
+            real_part, imag_part = G_jw.as_real_imag()
+            
+            # Simplify further
+            real_part = sp.simplify(real_part)
+            imag_part = sp.simplify(imag_part)
             
             # Convert to LaTeX
             G_latex = sp.latex(G)
@@ -128,213 +132,143 @@ class NyquistVisualizer:
         return sorted(imag_poles)
     
     def plot_complete_nyquist(self):
-        # Check for poles on imaginary axis
-        imag_poles = self.get_poles_on_imaginary_axis()
-        
-        if not imag_poles:
-            # No poles on imaginary axis - use standard Nyquist plot
-            return self._plot_standard_nyquist()
-        else:
-            # Poles on imaginary axis - handle with detour
-            return self._plot_nyquist_with_detour(imag_poles)
-    
-    def _plot_standard_nyquist(self):
-        """Plot Nyquist for systems without poles on imaginary axis"""
-        # Create dense frequency array
+        # Create a much denser frequency array for smooth plotting
         w_dense = np.logspace(self.min_freq, self.max_freq, 5000)
+        
+        # Calculate frequency response with dense points
         w_dense, mag_dense, phase_dense = signal.bode(self.sys, w_dense)
+        
+        # Convert to linear magnitude and radians
         mag_linear_dense = 10**(mag_dense / 20)
+        
+        # Use unwrapped phase to avoid jumps
         phase_rad_dense = np.unwrap(np.radians(phase_dense))
         
+        # Calculate Nyquist points
         nyquist_real_dense = mag_linear_dense * np.cos(phase_rad_dense)
         nyquist_imag_dense = mag_linear_dense * np.sin(phase_rad_dense)
         
-        fig, ax = plt.subplots(figsize=(8, 8))
-        
-        # Plot Nyquist with dense points
-        ax.plot(nyquist_real_dense, nyquist_imag_dense, 'b-', linewidth=2, label='ω: 0 → ∞')
-        ax.plot(nyquist_real_dense, -nyquist_imag_dense, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
-        
-        # Mark (-1, 0)
-        ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, label='(-1, 0)')
-        ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red')
-        
-        self._set_nyquist_axis_limits(ax, nyquist_real_dense, nyquist_imag_dense)
-        
-        ax.set_xlabel('Real', fontsize=12)
-        ax.set_ylabel('Imaginary', fontsize=12)
-        ax.grid(True, linestyle='--', alpha=0.5)
-        ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
-        ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
-        ax.set_aspect('equal')
-        ax.set_title('Nyquist Diagram (No poles on imaginary axis)', fontsize=14)
-        ax.legend(loc='best')
-        
-        plt.tight_layout()
-        return fig
-    
-    def _plot_nyquist_with_detour(self, imag_poles):
-        """Plot Nyquist for systems with poles on imaginary axis"""
-        # Create multiple frequency segments to avoid poles
-        all_real = []
-        all_imag = []
-        all_labels = []
-        
-        # Define detour radius (small epsilon)
-        epsilon = 1e-2
-        
-        # Sort poles including 0 if present
-        poles_to_avoid = sorted(imag_poles)
-        
-        # Start from min_freq
-        current_freq = 10**self.min_freq
-        
-        for i, pole_freq in enumerate(poles_to_avoid):
-            if pole_freq == 0:
-                # Handle pole at origin with detour
-                # Left of pole (negative epsilon to min_freq)
-                if current_freq < epsilon:
-                    w_left = np.logspace(np.log10(epsilon), self.min_freq, 1000)[::-1]
-                    w_left, mag_left, phase_left = signal.bode(self.sys, w_left)
-                    mag_linear_left = 10**(mag_left / 20)
-                    phase_rad_left = np.unwrap(np.radians(phase_left))
-                    
-                    all_real.append(mag_linear_left * np.cos(phase_rad_left))
-                    all_imag.append(mag_linear_left * np.sin(phase_rad_left))
-                    all_labels.append('ω: ε⁻ → 0⁻' if i == 0 else '')
-                
-                # Right of pole (epsilon to next pole or max_freq)
-                next_pole = poles_to_avoid[i+1] if i+1 < len(poles_to_avoid) else 10**self.max_freq
-                w_right = np.logspace(np.log10(epsilon), np.log10(min(next_pole - epsilon, 10**self.max_freq)), 1000)
-                w_right, mag_right, phase_right = signal.bode(self.sys, w_right)
-                mag_linear_right = 10**(mag_right / 20)
-                phase_rad_right = np.unwrap(np.radians(phase_right))
-                
-                all_real.append(mag_linear_right * np.cos(phase_rad_right))
-                all_imag.append(mag_linear_right * np.sin(phase_rad_right))
-                all_labels.append('ω: 0⁺ → ...' if i == 0 else '')
-                
-                current_freq = next_pole + epsilon
-            else:
-                # Handle pole at ω = pole_freq
-                # Below pole
-                w_below = np.logspace(np.log10(current_freq), np.log10(pole_freq - epsilon), 1000)
-                w_below, mag_below, phase_below = signal.bode(self.sys, w_below)
-                mag_linear_below = 10**(mag_below / 20)
-                phase_rad_below = np.unwrap(np.radians(phase_below))
-                
-                all_real.append(mag_linear_below * np.cos(phase_rad_below))
-                all_imag.append(mag_linear_below * np.sin(phase_rad_below))
-                all_labels.append('')
-                
-                # Above pole
-                next_pole = poles_to_avoid[i+1] if i+1 < len(poles_to_avoid) else 10**self.max_freq
-                w_above = np.logspace(np.log10(pole_freq + epsilon), np.log10(min(next_pole, 10**self.max_freq)), 1000)
-                w_above, mag_above, phase_above = signal.bode(self.sys, w_above)
-                mag_linear_above = 10**(mag_above / 20)
-                phase_rad_above = np.unwrap(np.radians(phase_above))
-                
-                all_real.append(mag_linear_above * np.cos(phase_rad_above))
-                all_imag.append(mag_linear_above * np.sin(phase_rad_above))
-                all_labels.append('')
-                
-                current_freq = next_pole
-        
-        # Plot last segment if any
-        if current_freq < 10**self.max_freq:
-            w_last = np.logspace(np.log10(current_freq), self.max_freq, 1000)
-            w_last, mag_last, phase_last = signal.bode(self.sys, w_last)
-            mag_linear_last = 10**(mag_last / 20)
-            phase_rad_last = np.unwrap(np.radians(phase_last))
-            
-            all_real.append(mag_linear_last * np.cos(phase_rad_last))
-            all_imag.append(mag_linear_last * np.sin(phase_rad_last))
-            all_labels.append('')
+        # Check if the plot goes to infinity (very large magnitude)
+        max_mag = np.max(mag_linear_dense)
+        has_infinite_segments = max_mag > 1e3  # Arbitrary threshold for "infinity"
         
         fig, ax = plt.subplots(figsize=(8, 8))
         
-        # Plot all segments
-        colors = plt.cm.tab10(np.linspace(0, 1, len(all_real)))
-        for i, (real_seg, imag_seg, label) in enumerate(zip(all_real, all_imag, all_labels)):
-            if len(real_seg) > 0:
-                ax.plot(real_seg, imag_seg, '-', color=colors[i % len(colors)], 
-                       linewidth=2, alpha=0.8, label=label if label else f'Segment {i+1}')
-                # Plot mirror for negative frequencies
-                ax.plot(real_seg, -imag_seg, '--', color=colors[i % len(colors)], 
-                       linewidth=1, alpha=0.4)
-        
-        # Mark (-1, 0)
-        ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, label='(-1, 0)')
-        ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red')
-        
-        # Combine all data for axis limits
-        all_real_combined = np.concatenate([segment for segment in all_real if len(segment) > 0])
-        all_imag_combined = np.concatenate([segment for segment in all_imag if len(segment) > 0])
-        
-        self._set_nyquist_axis_limits(ax, all_real_combined, all_imag_combined)
-        
-        ax.set_xlabel('Real', fontsize=12)
-        ax.set_ylabel('Imaginary', fontsize=12)
-        ax.grid(True, linestyle='--', alpha=0.5)
-        ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
-        ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
-        ax.set_aspect('equal')
-        
-        if imag_poles:
-            pole_text = ', '.join([f'ω={p:.2f}' if p > 0 else 'ω=0' for p in imag_poles])
-            ax.set_title(f'Nyquist Diagram (Poles at: {pole_text})', fontsize=14)
+        if not has_infinite_segments:
+            # Normal case: plot continuous curve
+            ax.plot(nyquist_real_dense, nyquist_imag_dense, 'b-', linewidth=2, label='ω: 0 → ∞')
+            ax.plot(nyquist_real_dense, -nyquist_imag_dense, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
         else:
-            ax.set_title('Nyquist Diagram', fontsize=14)
+            # Handle infinite segments by plotting them separately
+            # Find where magnitude exceeds threshold
+            large_mag_indices = np.where(mag_linear_dense > 1e3)[0]
+            
+            if len(large_mag_indices) > 0:
+                # Split the curve at infinite segments
+                segments = []
+                current_segment = []
+                
+                for i in range(len(nyquist_real_dense)):
+                    if i in large_mag_indices:
+                        if len(current_segment) > 0:
+                            segments.append(current_segment)
+                            current_segment = []
+                    else:
+                        current_segment.append(i)
+                
+                if len(current_segment) > 0:
+                    segments.append(current_segment)
+                
+                # Plot each segment separately
+                for i, segment_indices in enumerate(segments):
+                    if len(segment_indices) > 1:
+                        seg_real = nyquist_real_dense[segment_indices]
+                        seg_imag = nyquist_imag_dense[segment_indices]
+                        ax.plot(seg_real, seg_imag, 'b-', linewidth=2)
+                        ax.plot(seg_real, -seg_imag, 'b--', linewidth=1, alpha=0.5)
+            else:
+                # Fallback: plot everything
+                ax.plot(nyquist_real_dense, nyquist_imag_dense, 'b-', linewidth=2, label='ω: 0 → ∞')
+                ax.plot(nyquist_real_dense, -nyquist_imag_dense, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
         
-        # Simplified legend
-        ax.legend(['Positive ω', '(-1,0) point'], loc='best')
+        # Mark (-1, 0)
+        ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, label='(-1, 0)', zorder=5)
+        ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red', zorder=5)
         
-        plt.tight_layout()
-        return fig
-    
-    def _set_nyquist_axis_limits(self, ax, real_data, imag_data):
-        """Set intelligent axis limits for Nyquist plot"""
-        # Include critical point and all data
-        x_data = np.concatenate([real_data, [-1, 1, 0]])
-        y_data = np.concatenate([imag_data, [-1, 1, 0]])
+        # Better axis scaling
+        # For infinite segments, limit the view to reasonable bounds
+        if has_infinite_segments:
+            # Find finite points for setting limits
+            finite_indices = np.where(mag_linear_dense < 1e3)[0]
+            if len(finite_indices) > 0:
+                finite_real = nyquist_real_dense[finite_indices]
+                finite_imag = nyquist_imag_dense[finite_indices]
+                x_data = np.concatenate([finite_real, [-1, 1, 0]])
+                y_data = np.concatenate([finite_imag, [-1, 1, 0]])
+            else:
+                x_data = np.concatenate([nyquist_real_dense, [-1, 1, 0]])
+                y_data = np.concatenate([nyquist_imag_dense, [-1, 1, 0]])
+        else:
+            x_data = np.concatenate([nyquist_real_dense, [-1, 1, 0]])
+            y_data = np.concatenate([nyquist_imag_dense, [-1, 1, 0]])
         
         x_min, x_max = np.min(x_data), np.max(x_data)
         y_min, y_max = np.min(y_data), np.max(y_data)
         
-        # Add padding
-        padding = 0.2
+        # Add margins
+        margin = 0.2
         x_range = x_max - x_min
         y_range = y_max - y_min
         
         # Ensure minimum range
-        if x_range < 0.1:
-            x_range = 0.1
-            x_min = -0.05
-            x_max = 0.05
-        if y_range < 0.1:
-            y_range = 0.1
-            y_min = -0.05
-            y_max = 0.05
+        min_range = 0.1
+        if x_range < min_range:
+            x_range = min_range
+            x_min = -min_range/2
+            x_max = min_range/2
+        if y_range < min_range:
+            y_range = min_range
+            y_min = -min_range/2
+            y_max = min_range/2
         
-        # Apply padding
-        x_min -= x_range * padding
-        x_max += x_range * padding
-        y_min -= y_range * padding
-        y_max += y_range * padding
+        # Ensure plot is square and not too narrow
+        plot_range = max(x_range, y_range, min_range) * (1 + margin)
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
         
-        # Ensure we include (-1,0) and origin
-        x_min = min(x_min, -1.5)
-        x_max = max(x_max, 0.5)
-        y_min = min(y_min, -1.5)
-        y_max = max(y_max, 1.5)
+        # Adjust center if near origin
+        if abs(center_x) < plot_range/4:
+            center_x = 0
+        if abs(center_y) < plot_range/4:
+            center_y = 0
         
-        # Make square aspect ratio
-        x_center = (x_min + x_max) / 2
-        y_center = (y_min + y_max) / 2
-        max_range = max(x_max - x_min, y_max - y_min)
+        ax.set_xlim(center_x - plot_range/2, center_x + plot_range/2)
+        ax.set_ylim(center_y - plot_range/2, center_y + plot_range/2)
         
-        ax.set_xlim(x_center - max_range/2, x_center + max_range/2)
-        ax.set_ylim(y_center - max_range/2, y_center + max_range/2)
+        ax.set_xlabel('Real', fontsize=12)
+        ax.set_ylabel('Imaginary', fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
+        ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
+        ax.set_aspect('equal')
+        
+        if has_infinite_segments:
+            ax.set_title('Nyquist Diagram (with infinite segments)', fontsize=14)
+        else:
+            ax.set_title('Nyquist Diagram', fontsize=14)
+        
+        # Add arrow indicating direction
+        if len(nyquist_real_dense) > 10:
+            mid_idx = len(nyquist_real_dense) // 2
+            ax.annotate('', 
+                       xy=(nyquist_real_dense[mid_idx], nyquist_imag_dense[mid_idx]),
+                       xytext=(nyquist_real_dense[mid_idx-5], nyquist_imag_dense[mid_idx-5]),
+                       arrowprops=dict(arrowstyle='->', color='blue', lw=1))
+        
+        ax.legend(loc='best')
+        
+        plt.tight_layout()
+        return fig
     
     def create_fast_animation(self, num_frames=40):
         """
@@ -345,11 +279,6 @@ class NyquistVisualizer:
         except ImportError:
             st.error("Please install matplotlib and pillow")
             return None
-        
-        # Check for poles on imaginary axis - use simplified animation if present
-        imag_poles = self.get_poles_on_imaginary_axis()
-        if imag_poles:
-            return self._create_simplified_animation(num_frames)
         
         # Create figure
         fig = plt.figure(figsize=(14, 10))
@@ -501,127 +430,326 @@ class NyquistVisualizer:
             plt.close(fig)
             st.error(f"Animation error: {str(e)}")
             return None
-    
-    def _create_simplified_animation(self, num_frames=40):
-        """Create simplified animation for systems with poles on imaginary axis"""
-        try:
-            from matplotlib.animation import FuncAnimation, PillowWriter
-        except ImportError:
-            st.error("Please install matplotlib and pillow")
-            return None
-        
-        # Create figure
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-        
-        # Bode plot on left
-        ax1.semilogx(self.w_anim, self.mag_anim, 'b', alpha=0.3, linewidth=1)
-        ax1.set_title('Bode - Magnitude', fontsize=12)
-        ax1.set_ylabel('Magnitude [dB]')
-        ax1.set_xlabel('Frequency [rad/s]')
-        ax1.grid(True, alpha=0.3)
-        ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
-        
-        # Simplified Nyquist on right
-        ax2.set_aspect('equal')
-        ax2.grid(True, alpha=0.3)
-        ax2.axhline(y=0, color='k', alpha=0.3)
-        ax2.axvline(x=0, color='k', alpha=0.3)
-        ax2.set_xlabel('Real')
-        ax2.set_ylabel('Imaginary')
-        ax2.set_title('Nyquist (Simplified)', fontsize=12)
-        
-        # Plot static Nyquist curve
-        ax2.plot(self.nyquist_real_anim, self.nyquist_imag_anim, 'g-', alpha=0.5, linewidth=2)
-        ax2.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2)
-        ax2.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red')
-        
-        # Animation elements
-        mag_point, = ax1.plot([], [], 'bo', markersize=8)
-        nyquist_point, = ax2.plot([], [], 'go', markersize=10, markeredgecolor='k', markeredgewidth=2)
-        
-        text_box = ax2.text(0.02, 0.98, '', transform=ax2.transAxes, fontsize=10,
-                           verticalalignment='top', 
-                           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-        
-        # Set limits
-        all_real = list(self.nyquist_real_anim) + [-1, 1, 0]
-        all_imag = list(self.nyquist_imag_anim) + [-1, 1, 0]
-        
-        x_min, x_max = min(all_real), max(all_real)
-        y_min, y_max = min(all_imag), max(all_imag)
-        
-        margin = 0.2
-        plot_range = max(x_max - x_min, y_max - y_min, 0.1) * (1 + margin)
-        center_x = (x_min + x_max) / 2
-        center_y = (y_min + y_max) / 2
-        
-        ax2.set_xlim(center_x - plot_range/2, center_x + plot_range/2)
-        ax2.set_ylim(center_y - plot_range/2, center_y + plot_range/2)
-        
-        # Pre-calculate frame indices
-        indices = np.linspace(0, len(self.w_anim)-1, min(num_frames, len(self.w_anim)), dtype=int)
-        
-        def init():
-            mag_point.set_data([], [])
-            nyquist_point.set_data([], [])
-            text_box.set_text('')
-            return mag_point, nyquist_point, text_box
-        
-        def animate(i):
-            idx = indices[i]
-            
-            freq = self.w_anim[idx]
-            mag_db = self.mag_anim[idx]
-            mag_lin = self.mag_linear_anim[idx]
-            phase_deg = self.phase_anim[idx]
-            phase_rad = np.radians(phase_deg)
-            
-            # Update Bode point
-            mag_point.set_data([freq], [mag_db])
-            
-            # Update Nyquist point
-            x_end = mag_lin * np.cos(phase_rad)
-            y_end = mag_lin * np.sin(phase_rad)
-            nyquist_point.set_data([x_end], [y_end])
-            
-            # Update text
-            text_box.set_text(f'Frequency: {freq:.2f} rad/s\nMagnitude: {mag_lin:.3f}\nPhase: {phase_deg:.1f}°')
-            
-            return mag_point, nyquist_point, text_box
-        
-        # Create animation
-        anim = FuncAnimation(fig, animate, init_func=init,
-                           frames=len(indices), interval=50, blit=True)
-        
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as tmp_file:
-            temp_path = tmp_file.name
-        
-        try:
-            # Save animation to temp file
-            writer = PillowWriter(fps=15)
-            anim.save(temp_path, writer=writer)
-            
-            # Read temp file into BytesIO
-            with open(temp_path, 'rb') as f:
-                gif_data = f.read()
-            
-            # Clean up temp file
-            os.unlink(temp_path)
-            
-            # Create BytesIO object
-            gif_buffer = BytesIO(gif_data)
-            gif_buffer.seek(0)
-            
-            plt.close(fig)
-            return gif_buffer
-            
-        except Exception as e:
-            # Clean up on error
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            plt.close(fig)
-            st.error(f"Animation error: {str(e)}")
-            return None
 
-# ... [rest of the app code remains the same] ...
+# Main App
+st.title("📈 Bode & Nyquist Visualizer")
+
+# Parse coefficients function
+def parse_coeffs(coefficient_string):
+    """Parse comma-separated coefficients into list of floats"""
+    if not coefficient_string:
+        return [1.0]
+    
+    # Remove brackets if present
+    coeff_str = coefficient_string.strip("[]")
+    
+    # Split by comma and convert to float
+    try:
+        coeffs = [float(x.strip()) for x in coeff_str.split(',') if x.strip()]
+        return coeffs if coeffs else [1.0]
+    except ValueError:
+        st.error(f"Invalid coefficients: {coefficient_string}")
+        return [1.0]
+
+# Input section
+st.markdown("### Enter Transfer Function Coefficients")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("**Numerator Coefficients**")
+    st.markdown("Enter coefficients for highest to lowest power of s")
+    
+    # Use session state to remember the input
+    if 'num_input' not in st.session_state:
+        st.session_state.num_input = "1"
+    
+    num_input = st.text_input(
+        "Numerator [aₙ, aₙ₋₁, ..., a₁, a₀]:",
+        value=st.session_state.num_input,
+        key="num_input_widget",
+        help="Comma-separated coefficients, e.g., '1' for 1, '20,0,20' for 20s²+20"
+    )
+    
+    # Update session state
+    st.session_state.num_input = num_input
+
+with col2:
+    st.markdown("**Denominator Coefficients**")
+    st.markdown("Enter coefficients for highest to lowest power of s")
+    
+    if 'den_input' not in st.session_state:
+        st.session_state.den_input = "1, 1"
+    
+    den_input = st.text_input(
+        "Denominator [bₘ, bₘ₋₁, ..., b₁, b₀]:",
+        value=st.session_state.den_input,
+        key="den_input_widget",
+        help="Comma-separated coefficients, e.g., '1,1' for s+1, '1,0.5,1' for s²+0.5s+1"
+    )
+    
+    # Update session state
+    st.session_state.den_input = den_input
+
+# Sidebar for frequency range
+with st.sidebar:
+    st.markdown("### Frequency Range")
+    st.markdown("Set the frequency range for the Bode plot (in decades):")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if 'min_freq' not in st.session_state:
+            st.session_state.min_freq = -2.0
+        
+        min_freq = st.number_input("Min frequency (10^x)", 
+                                  value=st.session_state.min_freq, 
+                                  min_value=-5.0, 
+                                  max_value=5.0, 
+                                  step=0.5,
+                                  key="min_freq_input",
+                                  help="Minimum frequency exponent (10^min)")
+        st.session_state.min_freq = min_freq
+        
+    with col2:
+        if 'max_freq' not in st.session_state:
+            st.session_state.max_freq = 2.0
+        
+        max_freq = st.number_input("Max frequency (10^x)", 
+                                  value=st.session_state.max_freq, 
+                                  min_value=-5.0, 
+                                  max_value=5.0, 
+                                  step=0.5,
+                                  key="max_freq_input",
+                                  help="Maximum frequency exponent (10^max)")
+        st.session_state.max_freq = max_freq
+    
+    if min_freq >= max_freq:
+        st.error("Minimum frequency must be less than maximum frequency")
+        min_freq, max_freq = -2.0, 2.0
+        st.session_state.min_freq = min_freq
+        st.session_state.max_freq = max_freq
+    
+    st.markdown("---")
+    st.markdown("### Quick Examples")
+    
+    examples = [
+        ("First Order", "[1]", "[1, 1]", "1/(s+1)"),
+        ("Second Order", "[1]", "[1, 0.5, 1]", "1/(s²+0.5s+1)"),
+        ("Integrator", "[1]", "[1, 0]", "1/s"),
+        ("Differentiator", "[1, 0]", "[1]", "s"),
+        ("20*(s²+1)", "[20, 0, 20]", "[1]", "20s²+20"),
+        ("s*(s+100)", "[1, 100, 0]", "[1]", "s²+100s"),
+    ]
+    
+    for name, num_ex, den_ex, desc in examples:
+        if st.button(f"{name}: {desc}", key=f"ex_{name}"):
+            st.session_state.num_input = num_ex.strip("[]").replace(" ", "")
+            st.session_state.den_input = den_ex.strip("[]").replace(" ", "")
+            st.session_state.visualizer = None  # Reset visualizer
+            st.rerun()
+
+# Main generate button
+if st.button("Generate Plots", type="primary", use_container_width=True):
+    try:
+        # Parse coefficients
+        num_coeffs = parse_coeffs(st.session_state.num_input)
+        den_coeffs = parse_coeffs(st.session_state.den_input)
+        
+        # Store in session state
+        st.session_state.num_coeffs = num_coeffs
+        st.session_state.den_coeffs = den_coeffs
+        
+        # Create and store visualizer
+        st.session_state.visualizer = NyquistVisualizer(
+            num=num_coeffs, 
+            den=den_coeffs, 
+            min_freq=st.session_state.min_freq, 
+            max_freq=st.session_state.max_freq
+        )
+        
+        # Reset animation flag
+        st.session_state.show_animation = False
+        
+        # Show success
+        st.success("✓ Plots generated successfully!")
+        
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
+        st.info("Make sure your coefficients are valid numbers separated by commas.")
+
+# If we have a visualizer in session state, show the plots
+if st.session_state.visualizer is not None:
+    visualizer = st.session_state.visualizer
+    
+    # Display the transfer function and real/imag parts
+    def format_poly(coeffs, var='s'):
+        """Format coefficients as polynomial string"""
+        n = len(coeffs)
+        terms = []
+        for i, coeff in enumerate(coeffs):
+            if abs(coeff) > 1e-10:
+                power = n - i - 1
+                if power == 0:
+                    terms.append(f"{coeff:.4g}")
+                elif power == 1:
+                    terms.append(f"{coeff:.4g}{var}")
+                else:
+                    terms.append(f"{coeff:.4g}{var}^{power}")
+        if not terms:
+            return "0"
+        return " + ".join(terms).replace("+ -", "- ")
+    
+    # Get symbolic expressions
+    G_latex, real_latex, imag_latex = visualizer.get_symbolic_expressions(
+        st.session_state.num_coeffs, st.session_state.den_coeffs
+    )
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"**Transfer Function:**")
+        st.markdown(f"$$G(s) = \\frac{{{format_poly(st.session_state.num_coeffs)}}}{{{format_poly(st.session_state.den_coeffs)}}}$$")
+    
+    with col2:
+        if G_latex:
+           print("a")
+    
+    if real_latex and imag_latex:
+        st.markdown("**Real and Imaginary Parts:**")
+        st.markdown(f"$$\\text{{Re}}[G(j\\omega)] = {real_latex}$$")
+        st.markdown(f"$$\\text{{Im}}[G(j\\omega)] = {imag_latex}$$")
+    
+    # Tabs for different views
+    tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Nyquist Construction"])
+    
+    with tab1:
+        fig_bode = visualizer.plot_bode()
+        st.pyplot(fig_bode)
+        plt.close(fig_bode)
+        
+        st.info(f"Frequency range: 10^{{{st.session_state.min_freq}}} to 10^{{{st.session_state.max_freq}}} rad/s")
+    
+    with tab2:
+        fig_nyquist = visualizer.plot_complete_nyquist()
+        st.pyplot(fig_nyquist)
+        plt.close(fig_nyquist)
+        
+        with st.expander("Stability Information"):
+            st.markdown("""
+            **Nyquist Stability Criterion:**
+            
+            The **(-1, 0)** point (marked in red) is critical for stability analysis.
+            
+            1. **Clockwise encirclements** of (-1, 0) indicate **instability**
+            2. **No encirclement** → system is stable (if open-loop stable)
+            3. **Number of encirclements** = number of unstable poles
+            
+            The plot shows both positive frequencies (solid line) and 
+            negative frequencies (dashed line, complex conjugate).
+            
+            **Note:** When the plot goes to infinity, it may appear as disconnected segments.
+            This is correct behavior for systems with poles on the imaginary axis.
+            """)
+    
+    with tab3:
+        st.markdown("### Nyquist Construction Animation")
+        st.markdown("Watch how the Bode magnitude and phase combine to form the Nyquist plot.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if 'num_frames' not in st.session_state:
+                st.session_state.num_frames = 40
+            
+            num_frames = st.slider("Number of frames", 20, 60, st.session_state.num_frames, key="num_frames_slider")
+            st.session_state.num_frames = num_frames
+        
+        with col2:
+            if st.button("🎬 Generate Animation", type="primary", use_container_width=True, key="anim_btn"):
+                st.session_state.show_animation = True
+        
+        # Show animation if flag is set
+        if st.session_state.show_animation:
+            with st.spinner("Creating animation..."):
+                gif_buffer = visualizer.create_fast_animation(st.session_state.num_frames)
+                
+                if gif_buffer:
+                    # Display the GIF
+                    st.markdown("### Construction Animation")
+                    
+                    # Convert to base64 for embedding
+                    gif_base64 = base64.b64encode(gif_buffer.read()).decode()
+                    gif_buffer.seek(0)
+                    
+                    # Display with HTML (centered)
+                    st.markdown(
+                        f'<div style="text-align: center;">'
+                        f'<img src="data:image/gif;base64,{gif_base64}" alt="nyquist animation" width="800">'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Download button
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        st.download_button(
+                            "⬇️ Download GIF",
+                            data=gif_buffer,
+                            file_name="nyquist_construction.gif",
+                            mime="image/gif",
+                            use_container_width=True
+                        )
+                else:
+                    st.error("Could not create animation. Make sure pillow is installed: pip install pillow")
+        
+        # Always show explanation
+        with st.expander("How to interpret the animation"):
+            st.markdown("""
+            **Animation Elements:**
+            
+            - **Blue circle**: Radius equals the magnitude |G(jω)| from Bode plot
+            - **Red dashed line**: Angle equals the phase ∠G(jω) from Bode plot  
+            - **Green point**: Intersection = G(jω) in complex plane
+            - **Green line**: Traces the complete Nyquist plot as ω increases
+            
+            **What's happening:**
+            1. As frequency ω increases, the magnitude and phase change
+            2. The blue circle grows/shrinks based on magnitude
+            3. The red line rotates based on phase
+            4. Their intersection traces the Nyquist plot
+            
+            This shows how frequency response (Bode) transforms to complex plane (Nyquist).
+            
+            **Note:** For systems that go to infinity, the animation may show large jumps.
+            This is expected behavior for such systems.
+            """)
+
+# Clear button to reset everything
+if st.button("Clear All", type="secondary"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
+# Quick help
+with st.expander("📋 How to enter coefficients"):
+    st.markdown("""
+    **Coefficient Format:**
+    
+    Enter coefficients from highest power to constant term, separated by commas.
+    
+    **Examples:**
+    
+    | System | Transfer Function | Numerator | Denominator |
+    |--------|-------------------|-----------|-------------|
+    | First order | 1/(s+1) | `1` | `1, 1` |
+    | Second order | 1/(s²+0.5s+1) | `1` | `1, 0.5, 1` |
+    | Integrator | 1/s | `1` | `1, 0` |
+    | Differentiator | s | `1, 0` | `1` |
+    | 20*(s²+1) | 20s²+20 | `20, 0, 20` | `1` |
+    | s*(s+100) | s²+100s | `1, 100, 0` | `1` |
+    
+    **Note:** The denominator must have at least one non-zero coefficient.
+    """)
+
+# Requirements info
+with st.expander("🔧 Installation"):
+    st.code("pip install streamlit numpy matplotlib scipy pillow sympy")
