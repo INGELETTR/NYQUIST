@@ -107,53 +107,100 @@ class NyquistVisualizer:
         
         plt.tight_layout()
         return fig
-    
     def plot_complete_nyquist(self):
+        # Create very dense frequency array specifically for Nyquist
+    #     Use more points near frequencies where magnitude changes rapidly
+        w_dense = np.logspace(self.min_freq, self.max_freq, 10000)
+    
+    # Calculate frequency response
+        w_dense, mag_dense, phase_dense = signal.bode(self.sys, w_dense)
+    
+    # Convert to linear magnitude
+        mag_linear_dense = 10**(mag_dense / 20)
+    
+    # Use unwrapped phase to avoid jumps
+        phase_unwrapped = np.unwrap(np.radians(phase_dense))
+    
+    # Calculate Nyquist points
+        nyquist_real_dense = mag_linear_dense * np.cos(phase_unwrapped)
+        nyquist_imag_dense = mag_linear_dense * np.sin(phase_unwrapped)
+    
+    # Create figure
         fig, ax = plt.subplots(figsize=(8, 8))
-        
-        # Plot Nyquist
-        ax.plot(self.nyquist_real, self.nyquist_imag, 'b-', linewidth=2, label='ω: 0 → ∞')
-        ax.plot(self.nyquist_real, -self.nyquist_imag, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
-        
-        # Mark (-1, 0)
-        ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, label='(-1, 0)')
-        ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red')
-        
-        # Better axis scaling
-        x_data = np.concatenate([self.nyquist_real, [-1, 1, 0]])
-        y_data = np.concatenate([self.nyquist_imag, [-1, 1, 0]])
-        
-        x_min, x_max = np.min(x_data), np.max(x_data)
-        y_min, y_max = np.min(y_data), np.max(y_data)
-        
-        # Add margins
-        margin = 0.2
+    
+    # Plot main Nyquist curve
+        ax.plot(nyquist_real_dense, nyquist_imag_dense, 'b-', linewidth=2, 
+            label='ω: 0 → ∞', zorder=2)
+    
+    # Plot mirror image for negative frequencies
+        ax.plot(nyquist_real_dense, -nyquist_imag_dense, 'b--', linewidth=1, 
+                alpha=0.5, label='ω: -∞ → 0', zorder=1)
+    
+    # Mark critical point (-1, 0)
+        ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, 
+                label='(-1, 0)', zorder=4)
+        ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red', zorder=4)
+    
+    # Mark origin for reference
+        ax.plot(0, 0, 'k+', markersize=10, markeredgewidth=2, zorder=3)
+    
+    # Determine smart axis limits
+    # Include both positive and negative frequency data
+        all_real = np.concatenate([nyquist_real_dense, -nyquist_imag_dense, [-1, 1, 0]])
+        all_imag = np.concatenate([nyquist_imag_dense, -nyquist_imag_dense, [-1, 1, 0]])
+    
+    # Calculate bounds with padding
+        x_min, x_max = np.min(all_real), np.max(all_real)
+        y_min, y_max = np.min(all_imag), np.max(all_imag)
+    
+    # Add 20% padding
+        x_padding = (x_max - x_min) * 0.2
+        y_padding = (y_max - y_min) * 0.2
+    
+        x_min -= x_padding
+        x_max += x_padding
+        y_min -= y_padding
+        y_max += y_padding
+    
+    # Ensure plot includes critical regions
+        if x_min > -2 or x_max < 0:
+            x_min = min(x_min, -2.5)
+            x_max = max(x_max, 0.5)
+        if y_min > -2 or y_max < 2:
+            y_min = min(y_min, -2.5)
+            y_max = max(y_max, 2.5)
+    
+    # Make plot square
         x_range = x_max - x_min
         y_range = y_max - y_min
+        max_range = max(x_range, y_range)
+    
+        if x_range < max_range:
+            diff = max_range - x_range
+            x_min -= diff / 2
+            x_max += diff / 2
+        elif y_range < max_range:
+            diff = max_range - y_range
+            y_min -= diff / 2
+            y_max += diff / 2
+    
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+    
+    # Add grid and axes
+        ax.grid(True, linestyle='--', alpha=0.5, zorder=0)
+        ax.axhline(y=0, color='k', linestyle='-', alpha=0.3, linewidth=0.5, zorder=0)
+        ax.axvline(x=0, color='k', linestyle='-', alpha=0.3, linewidth=0.5, zorder=0)
         
-        # Ensure plot is square and not too narrow
-        plot_range = max(x_range, y_range, 0.1) * (1 + margin)
-        center_x = (x_min + x_max) / 2
-        center_y = (y_min + y_max) / 2
-        
-        # Make sure plot includes origin and (-1,0) if they're near the edge
-        if abs(center_x) < plot_range/4:
-            center_x = 0
-        if abs(center_y) < plot_range/4:
-            center_y = 0
-        
-        ax.set_xlim(center_x - plot_range/2, center_x + plot_range/2)
-        ax.set_ylim(center_y - plot_range/2, center_y + plot_range/2)
-        
+    # Labels and title
         ax.set_xlabel('Real', fontsize=12)
         ax.set_ylabel('Imaginary', fontsize=12)
-        ax.grid(True, linestyle='--', alpha=0.5)
-        ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
-        ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
         ax.set_aspect('equal')
-        ax.set_title('Nyquist Diagram', fontsize=14)
-        ax.legend(loc='best')
-        
+        ax.set_title('Nyquist Diagram', fontsize=14, pad=20)
+    
+    # Legend
+        ax.legend(loc='best', fontsize=10)
+    
         plt.tight_layout()
         return fig
     
@@ -635,4 +682,5 @@ with st.expander("📋 How to enter coefficients"):
 # Requirements info
 with st.expander("🔧 Installation"):
     st.code("pip install streamlit numpy matplotlib scipy pillow sympy")
+
 
