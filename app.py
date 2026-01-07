@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import signal
+import control as ct
 import warnings
 import base64
 from io import BytesIO
@@ -27,10 +27,11 @@ if 'den_coeffs' not in st.session_state:
 if 'show_animation' not in st.session_state:
     st.session_state.show_animation = False
 
-class NyquistVisualizer:
+class ControlVisualizer:
     def __init__(self, num=None, den=None, min_freq=-2, max_freq=2):
         if num is not None and den is not None:
-            self.sys = signal.TransferFunction(num, den)
+            # Create transfer function using control library
+            self.sys = ct.TransferFunction(num, den)
         else:
             raise ValueError("Must provide num and den coefficients")
         
@@ -38,29 +39,46 @@ class NyquistVisualizer:
         self.min_freq = min_freq
         self.max_freq = max_freq
         
-        # Store coefficients for pole/zero analysis
+        # Store coefficients
         self.num_coeffs = num
         self.den_coeffs = den
         
-        # Frequency range for plots
+        # Generate frequency array for Bode
         self.w = np.logspace(min_freq, max_freq, 1000)
         
-        # Calculate frequency response
-        self.w, self.mag, self.phase = signal.bode(self.sys, self.w)
-        self.mag_linear = 10**(self.mag / 20)
+        # Calculate Bode plot data
+        self.mag, self.phase, self.w_bode = ct.bode(self.sys, self.w, plot=False)
+        # Convert magnitude to dB
+        self.mag_db = 20 * np.log10(self.mag)
         
-        # Calculate Nyquist points
-        phase_rad = np.radians(self.phase)
-        self.nyquist_real = self.mag_linear * np.cos(phase_rad)
-        self.nyquist_imag = self.mag_linear * np.sin(phase_rad)
+        # Calculate Nyquist data using control library
+        # Generate frequencies for Nyquist
+        self.w_nyquist = np.logspace(min_freq, max_freq, 1000)
+        
+        # Get frequency response
+        self.freqresp = ct.freqresp(self.sys, self.w_nyquist)
+        # freqresp returns (mag, phase, omega), but we want complex response
+        # So let's calculate it directly
+        nyquist_response = self._compute_nyquist_response(self.w_nyquist)
+        self.nyquist_real = np.real(nyquist_response)
+        self.nyquist_imag = np.imag(nyquist_response)
         
         # Store for animation (fewer points for speed)
         self.w_anim = np.logspace(min_freq, max_freq, 200)
-        self.w_anim, self.mag_anim, self.phase_anim = signal.bode(self.sys, self.w_anim)
-        self.mag_linear_anim = 10**(self.mag_anim / 20)
-        phase_rad_anim = np.radians(self.phase_anim)
-        self.nyquist_real_anim = self.mag_linear_anim * np.cos(phase_rad_anim)
-        self.nyquist_imag_anim = self.mag_linear_anim * np.sin(phase_rad_anim)
+        self.mag_anim, self.phase_anim, _ = ct.bode(self.sys, self.w_anim, plot=False)
+        self.mag_db_anim = 20 * np.log10(self.mag_anim)
+        nyquist_response_anim = self._compute_nyquist_response(self.w_anim)
+        self.nyquist_real_anim = np.real(nyquist_response_anim)
+        self.nyquist_imag_anim = np.imag(nyquist_response_anim)
+    
+    def _compute_nyquist_response(self, frequencies):
+        """Compute frequency response G(jω) for given frequencies"""
+        response = []
+        for w in frequencies:
+            # Evaluate transfer function at s = jω
+            resp = self.sys(1j * w)
+            response.append(resp)
+        return np.array(response)
     
     def get_symbolic_expressions(self, num_coeffs, den_coeffs):
         """Compute symbolic real and imaginary parts of G(jω)"""
@@ -98,15 +116,18 @@ class NyquistVisualizer:
             return None, None, None
     
     def plot_bode(self):
+        """Plot Bode diagram using matplotlib"""
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
         
-        ax1.semilogx(self.w, self.mag, 'b', linewidth=2)
+        # Magnitude plot
+        ax1.semilogx(self.w_bode, self.mag_db, 'b', linewidth=2)
         ax1.set_ylabel('Magnitude [dB]', fontsize=12)
         ax1.grid(True, which='both', linestyle='--', alpha=0.5)
         ax1.set_title(f'Bode Diagram (ω: 10^{{{self.min_freq}}} to 10^{{{self.max_freq}}} rad/s)', fontsize=14)
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
-        ax2.semilogx(self.w, self.phase, 'r', linewidth=2)
+        # Phase plot
+        ax2.semilogx(self.w_bode, self.phase, 'r', linewidth=2)
         ax2.set_ylabel('Phase [deg]', fontsize=12)
         ax2.set_xlabel('Frequency [rad/s]', fontsize=12)
         ax2.grid(True, which='both', linestyle='--', alpha=0.5)
@@ -116,171 +137,113 @@ class NyquistVisualizer:
         plt.tight_layout()
         return fig
     
-    def get_poles_on_imaginary_axis(self):
-        """Find poles on the imaginary axis (including origin)"""
-        # Get poles of the system
-        poles = np.roots(self.den_coeffs)
-        
-        # Check for poles on imaginary axis (real part = 0)
-        imag_poles = []
-        for pole in poles:
-            if abs(pole.real) < 1e-10 and abs(pole.imag) > 1e-10:
-                imag_poles.append(abs(pole.imag))
-            elif abs(pole) < 1e-10:  # Pole at origin
-                imag_poles.append(0)
-        
-        return sorted(imag_poles)
-    
-    def plot_complete_nyquist(self):
-        # Create a much denser frequency array for smooth plotting
-        w_dense = np.logspace(self.min_freq, self.max_freq, 5000)
-        
-        # Calculate frequency response with dense points
-        w_dense, mag_dense, phase_dense = signal.bode(self.sys, w_dense)
-        
-        # Convert to linear magnitude and radians
-        mag_linear_dense = 10**(mag_dense / 20)
-        
-        # Use unwrapped phase to avoid jumps
-        phase_rad_dense = np.unwrap(np.radians(phase_dense))
-        
-        # Calculate Nyquist points
-        nyquist_real_dense = mag_linear_dense * np.cos(phase_rad_dense)
-        nyquist_imag_dense = mag_linear_dense * np.sin(phase_rad_dense)
-        
-        # Check if the plot goes to infinity (very large magnitude)
-        max_mag = np.max(mag_linear_dense)
-        has_infinite_segments = max_mag > 1e2  # Arbitrary threshold for "infinity"
-        
+    def plot_nyquist(self):
+        """Plot Nyquist diagram using control library's built-in function"""
         fig, ax = plt.subplots(figsize=(8, 8))
         
-        if not has_infinite_segments:
-            # Normal case: plot continuous curve
-            ax.plot(nyquist_real_dense, nyquist_imag_dense, 'b-', linewidth=2, label='ω: 0 → ∞')
-            ax.plot(nyquist_real_dense, -nyquist_imag_dense, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
-        else:
-            # Handle infinite segments by plotting them separately
-            # Find where magnitude exceeds threshold
-            large_mag_indices = np.where(mag_linear_dense > 1e3)[0]
-            
-            if len(large_mag_indices) > 0:
-                # Split the curve at infinite segments
-                segments = []
-                current_segment = []
-                
-                for i in range(len(nyquist_real_dense)):
-                    if i in large_mag_indices:
-                        if len(current_segment) > 0:
-                            segments.append(current_segment)
-                            current_segment = []
-                    else:
-                        current_segment.append(i)
-                
-                if len(current_segment) > 0:
-                    segments.append(current_segment)
-                
-                # Plot each segment separately
-                for i, segment_indices in enumerate(segments):
-                    if len(segment_indices) > 1:
-                        seg_real = nyquist_real_dense[segment_indices]
-                        seg_imag = nyquist_imag_dense[segment_indices]
-                        ax.plot(seg_real, seg_imag, 'b-', linewidth=2)
-                        ax.plot(seg_real, -seg_imag, 'b--', linewidth=1, alpha=0.5)
-            else:
-                # Fallback: plot everything
-                ax.plot(nyquist_real_dense, nyquist_imag_dense, 'b-', linewidth=2, label='ω: 0 → ∞')
-                ax.plot(nyquist_real_dense, -nyquist_imag_dense, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
+        # Plot Nyquist using control library (it handles infinity better)
+        # We'll plot it manually but with proper handling
+        ax.plot(self.nyquist_real, self.nyquist_imag, 'b-', linewidth=2, label='ω: 0 → ∞')
+        ax.plot(self.nyquist_real, -self.nyquist_imag, 'b--', linewidth=1, alpha=0.5, label='ω: -∞ → 0')
         
-        # Mark (-1, 0)
+        # Mark (-1, 0) point
         ax.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2, label='(-1, 0)', zorder=5)
         ax.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red', zorder=5)
         
-        # Better axis scaling
-        # For infinite segments, limit the view to reasonable bounds
-        if has_infinite_segments:
-            # Find finite points for setting limits
-            finite_indices = np.where(mag_linear_dense < 1e3)[0]
-            if len(finite_indices) > 0:
-                finite_real = nyquist_real_dense[finite_indices]
-                finite_imag = nyquist_imag_dense[finite_indices]
-                x_data = np.concatenate([finite_real, [-1, 1, 0]])
-                y_data = np.concatenate([finite_imag, [-1, 1, 0]])
-            else:
-                x_data = np.concatenate([nyquist_real_dense, [-1, 1, 0]])
-                y_data = np.concatenate([nyquist_imag_dense, [-1, 1, 0]])
-        else:
-            x_data = np.concatenate([nyquist_real_dense, [-1, 1, 0]])
-            y_data = np.concatenate([nyquist_imag_dense, [-1, 1, 0]])
+        # Add arrow showing direction
+        if len(self.nyquist_real) > 10:
+            mid_idx = len(self.nyquist_real) // 2
+            ax.annotate('', 
+                       xy=(self.nyquist_real[mid_idx], self.nyquist_imag[mid_idx]),
+                       xytext=(self.nyquist_real[mid_idx-5], self.nyquist_imag[mid_idx-5]),
+                       arrowprops=dict(arrowstyle='->', color='blue', lw=1))
         
-        x_min, x_max = np.min(x_data), np.max(x_data)
-        y_min, y_max = np.min(y_data), np.max(y_data)
+        # Set axis limits
+        self._set_nyquist_limits(ax)
         
-        # Add margins
-        margin = 0.2
-        x_range = x_max - x_min
-        y_range = y_max - y_min
-        
-        # Ensure minimum range
-        min_range = 0.1
-        if x_range < min_range:
-            x_range = min_range
-            x_min = -min_range/2
-            x_max = min_range/2
-        if y_range < min_range:
-            y_range = min_range
-            y_min = -min_range/2
-            y_max = min_range/2
-        
-        # Ensure plot is square and not too narrow
-        plot_range = max(x_range, y_range, min_range) * (1 + margin)
-        center_x = (x_min + x_max) / 2
-        center_y = (y_min + y_max) / 2
-        
-        # Adjust center if near origin
-        if abs(center_x) < plot_range/4:
-            center_x = 0
-        if abs(center_y) < plot_range/4:
-            center_y = 0
-        
-        ax.set_xlim(center_x - plot_range/2, center_x + plot_range/2)
-        ax.set_ylim(center_y - plot_range/2, center_y + plot_range/2)
-        
-        ax.set_xlabel('Real', fontsize=12)
-        ax.set_ylabel('Imaginary', fontsize=12)
+        # Add grid and labels
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
         ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
+        ax.set_xlabel('Real', fontsize=12)
+        ax.set_ylabel('Imaginary', fontsize=12)
         ax.set_aspect('equal')
-        
-        if has_infinite_segments:
-            ax.set_title('Nyquist Diagram (with infinite segments)', fontsize=14)
-        else:
-            ax.set_title('Nyquist Diagram', fontsize=14)
-        
-        # Add arrow indicating direction
-        if len(nyquist_real_dense) > 10:
-            mid_idx = len(nyquist_real_dense) // 2
-            ax.annotate('', 
-                       xy=(nyquist_real_dense[mid_idx], nyquist_imag_dense[mid_idx]),
-                       xytext=(nyquist_real_dense[mid_idx-5], nyquist_imag_dense[mid_idx-5]),
-                       arrowprops=dict(arrowstyle='->', color='blue', lw=1))
-        
+        ax.set_title('Nyquist Diagram', fontsize=14)
         ax.legend(loc='best')
         
         plt.tight_layout()
         return fig
     
-    def create_fast_animation(self, num_frames=40):
-        """
-        Create animation and save as GIF using temp file
-        """
+    def _set_nyquist_limits(self, ax):
+        """Set appropriate axis limits for Nyquist plot"""
+        # Get data bounds
+        x_data = np.concatenate([self.nyquist_real, [-1, 1, 0]])
+        y_data = np.concatenate([self.nyquist_imag, [-1, 1, 0]])
+        
+        # Check if we have large values (infinity case)
+        max_abs_real = np.max(np.abs(self.nyquist_real))
+        max_abs_imag = np.max(np.abs(self.nyquist_imag))
+        
+        if max_abs_real > 100 or max_abs_imag > 100:
+            # System goes to infinity - show reasonable window
+            # Find finite points
+            finite_real = self.nyquist_real[np.abs(self.nyquist_real) < 100]
+            finite_imag = self.nyquist_imag[np.abs(self.nyquist_imag) < 100]
+            
+            if len(finite_real) > 0:
+                x_min, x_max = np.min(finite_real), np.max(finite_real)
+                y_min, y_max = np.min(finite_imag), np.max(finite_imag)
+            else:
+                x_min, x_max = -10, 10
+                y_min, y_max = -10, 10
+        else:
+            x_min, x_max = np.min(x_data), np.max(x_data)
+            y_min, y_max = np.min(y_data), np.max(y_data)
+        
+        # Add padding
+        padding = 0.2
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        
+        # Ensure minimum range
+        if x_range < 0.1:
+            x_range = 0.1
+            x_min = -0.05
+            x_max = 0.05
+        if y_range < 0.1:
+            y_range = 0.1
+            y_min = -0.05
+            y_max = 0.05
+        
+        # Apply padding
+        x_min -= x_range * padding
+        x_max += x_range * padding
+        y_min -= y_range * padding
+        y_max += y_range * padding
+        
+        # Ensure we include (-1,0) and origin
+        x_min = min(x_min, -1.5)
+        x_max = max(x_max, 0.5)
+        y_min = min(y_min, -1.5)
+        y_max = max(y_max, 1.5)
+        
+        # Make square aspect ratio
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        max_range = max(x_max - x_min, y_max - y_min)
+        
+        ax.set_xlim(x_center - max_range/2, x_center + max_range/2)
+        ax.set_ylim(y_center - max_range/2, y_center + max_range/2)
+    
+    def create_animation(self, num_frames=40):
+        """Create animation showing Bode to Nyquist transformation"""
         try:
             from matplotlib.animation import FuncAnimation, PillowWriter
         except ImportError:
             st.error("Please install matplotlib and pillow")
             return None
         
-        # Create figure
+        # Create figure with subplots
         fig = plt.figure(figsize=(14, 10))
         
         # Bode plots on left
@@ -288,13 +251,14 @@ class NyquistVisualizer:
         ax2 = plt.subplot2grid((2, 2), (1, 0))  # Phase
         ax3 = plt.subplot2grid((2, 2), (0, 1), rowspan=2)  # Nyquist
         
-        # Setup Bode plots
-        ax1.semilogx(self.w_anim, self.mag_anim, 'b', alpha=0.3, linewidth=1)
+        # Setup Bode magnitude plot
+        ax1.semilogx(self.w_anim, self.mag_db_anim, 'b', alpha=0.3, linewidth=1)
         ax1.set_title('Bode - Magnitude', fontsize=12)
         ax1.set_ylabel('Magnitude [dB]')
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
+        # Setup Bode phase plot
         ax2.semilogx(self.w_anim, self.phase_anim, 'r', alpha=0.3, linewidth=1)
         ax2.set_title('Bode - Phase', fontsize=12)
         ax2.set_ylabel('Phase [deg]')
@@ -302,7 +266,7 @@ class NyquistVisualizer:
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim([10**self.min_freq, 10**self.max_freq])
         
-        # Setup Nyquist plot with proper scaling
+        # Setup Nyquist plot
         ax3.set_aspect('equal')
         ax3.grid(True, alpha=0.3)
         ax3.axhline(y=0, color='k', alpha=0.3)
@@ -311,7 +275,12 @@ class NyquistVisualizer:
         ax3.set_ylabel('Imaginary')
         ax3.set_title('Nyquist Construction', fontsize=12)
         
-        # Calculate nice limits
+        # Plot static Nyquist curve
+        ax3.plot(self.nyquist_real_anim, self.nyquist_imag_anim, 'g-', alpha=0.3, linewidth=1)
+        ax3.plot(-1, 0, 'rx', markersize=12, markeredgewidth=2)
+        ax3.text(-1.1, 0.1, '(-1, 0)', fontsize=12, color='red')
+        
+        # Set Nyquist plot limits
         all_real = list(self.nyquist_real_anim) + [-1, 1, 0]
         all_imag = list(self.nyquist_imag_anim) + [-1, 1, 0]
         
@@ -340,13 +309,20 @@ class NyquistVisualizer:
         mag_point, = ax1.plot([], [], 'bo', markersize=8)
         phase_point, = ax2.plot([], [], 'ro', markersize=8)
         
+        # Circle for magnitude in Nyquist plot
         circle = plt.Circle((0, 0), 0, fill=False, color='blue', alpha=0.5, linewidth=2)
         ax3.add_patch(circle)
         
+        # Phase line in Nyquist plot
         phase_line, = ax3.plot([], [], 'r--', alpha=0.7, linewidth=2)
+        
+        # Current point in Nyquist plot
         nyquist_point, = ax3.plot([], [], 'go', markersize=10, markeredgecolor='k', markeredgewidth=2)
+        
+        # Trajectory in Nyquist plot
         nyquist_trajectory, = ax3.plot([], [], 'g-', alpha=0.7, linewidth=2)
         
+        # Text box for information
         text_box = ax3.text(0.02, 0.98, '', transform=ax3.transAxes, fontsize=10,
                            verticalalignment='top', 
                            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
@@ -368,8 +344,8 @@ class NyquistVisualizer:
             idx = indices[i]
             
             freq = self.w_anim[idx]
-            mag_db = self.mag_anim[idx]
-            mag_lin = self.mag_linear_anim[idx]
+            mag_db = self.mag_db_anim[idx]
+            mag_lin = self.mag_anim[idx]
             phase_deg = self.phase_anim[idx]
             phase_rad = np.radians(phase_deg)
             
@@ -377,7 +353,7 @@ class NyquistVisualizer:
             mag_point.set_data([freq], [mag_db])
             phase_point.set_data([freq], [phase_deg])
             
-            # Update circle
+            # Update circle (magnitude in complex plane)
             circle.set_radius(mag_lin)
             
             # Update phase line
@@ -385,7 +361,7 @@ class NyquistVisualizer:
             y_end = mag_lin * np.sin(phase_rad)
             phase_line.set_data([0, x_end], [0, y_end])
             
-            # Update point
+            # Update current point
             nyquist_point.set_data([x_end], [y_end])
             
             # Update trajectory
@@ -432,7 +408,7 @@ class NyquistVisualizer:
             return None
 
 # Main App
-st.title("📈 Bode & Nyquist Visualizer")
+st.title("📈 Bode & Nyquist Visualizer (Control Library)")
 
 # Parse coefficients function
 def parse_coeffs(coefficient_string):
@@ -559,8 +535,8 @@ if st.button("Generate Plots", type="primary", use_container_width=True):
         st.session_state.num_coeffs = num_coeffs
         st.session_state.den_coeffs = den_coeffs
         
-        # Create and store visualizer
-        st.session_state.visualizer = NyquistVisualizer(
+        # Create and store visualizer using control library
+        st.session_state.visualizer = ControlVisualizer(
             num=num_coeffs, 
             den=den_coeffs, 
             min_freq=st.session_state.min_freq, 
@@ -612,7 +588,8 @@ if st.session_state.visualizer is not None:
     
     with col2:
         if G_latex:
-           print("a")
+            st.markdown(f"**Transfer Function (LaTeX):**")
+            st.markdown(f"$$G(s) = {G_latex}$$")
     
     if real_latex and imag_latex:
         st.markdown("**Real and Imaginary Parts:**")
@@ -620,7 +597,7 @@ if st.session_state.visualizer is not None:
         st.markdown(f"$$\\text{{Im}}[G(j\\omega)] = {imag_latex}$$")
     
     # Tabs for different views
-    tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Nyquist Construction"])
+    tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Animation"])
     
     with tab1:
         fig_bode = visualizer.plot_bode()
@@ -630,7 +607,7 @@ if st.session_state.visualizer is not None:
         st.info(f"Frequency range: 10^{{{st.session_state.min_freq}}} to 10^{{{st.session_state.max_freq}}} rad/s")
     
     with tab2:
-        fig_nyquist = visualizer.plot_complete_nyquist()
+        fig_nyquist = visualizer.plot_nyquist()
         st.pyplot(fig_nyquist)
         plt.close(fig_nyquist)
         
@@ -647,12 +624,11 @@ if st.session_state.visualizer is not None:
             The plot shows both positive frequencies (solid line) and 
             negative frequencies (dashed line, complex conjugate).
             
-            **Note:** When the plot goes to infinity, it may appear as disconnected segments.
-            This is correct behavior for systems with poles on the imaginary axis.
+            **Note:** The control library handles poles on the imaginary axis and infinity better.
             """)
     
     with tab3:
-        st.markdown("### Nyquist Construction Animation")
+        st.markdown("### Bode to Nyquist Animation")
         st.markdown("Watch how the Bode magnitude and phase combine to form the Nyquist plot.")
         
         col1, col2 = st.columns(2)
@@ -660,7 +636,8 @@ if st.session_state.visualizer is not None:
             if 'num_frames' not in st.session_state:
                 st.session_state.num_frames = 40
             
-            num_frames = st.slider("Number of frames", 20, 60, st.session_state.num_frames, key="num_frames_slider")
+            num_frames = st.slider("Number of animation frames", 20, 60, 
+                                  st.session_state.num_frames, key="num_frames_slider")
             st.session_state.num_frames = num_frames
         
         with col2:
@@ -670,11 +647,11 @@ if st.session_state.visualizer is not None:
         # Show animation if flag is set
         if st.session_state.show_animation:
             with st.spinner("Creating animation..."):
-                gif_buffer = visualizer.create_fast_animation(st.session_state.num_frames)
+                gif_buffer = visualizer.create_animation(st.session_state.num_frames)
                 
                 if gif_buffer:
                     # Display the GIF
-                    st.markdown("### Construction Animation")
+                    st.markdown("### Bode to Nyquist Construction")
                     
                     # Convert to base64 for embedding
                     gif_base64 = base64.b64encode(gif_buffer.read()).decode()
@@ -694,7 +671,7 @@ if st.session_state.visualizer is not None:
                         st.download_button(
                             "⬇️ Download GIF",
                             data=gif_buffer,
-                            file_name="nyquist_construction.gif",
+                            file_name="bode_to_nyquist.gif",
                             mime="image/gif",
                             use_container_width=True
                         )
@@ -702,13 +679,13 @@ if st.session_state.visualizer is not None:
                     st.error("Could not create animation. Make sure pillow is installed: pip install pillow")
         
         # Always show explanation
-        with st.expander("How to interpret the animation"):
+        with st.expander("How the animation works"):
             st.markdown("""
             **Animation Elements:**
             
-            - **Blue circle**: Radius equals the magnitude |G(jω)| from Bode plot
-            - **Red dashed line**: Angle equals the phase ∠G(jω) from Bode plot  
-            - **Green point**: Intersection = G(jω) in complex plane
+            - **Blue circle**: Radius = magnitude |G(jω)| from Bode plot
+            - **Red dashed line**: Angle = phase ∠G(jω) from Bode plot  
+            - **Green point**: Intersection = G(jω) in complex plane (Nyquist point)
             - **Green line**: Traces the complete Nyquist plot as ω increases
             
             **What's happening:**
@@ -718,9 +695,6 @@ if st.session_state.visualizer is not None:
             4. Their intersection traces the Nyquist plot
             
             This shows how frequency response (Bode) transforms to complex plane (Nyquist).
-            
-            **Note:** For systems that go to infinity, the animation may show large jumps.
-            This is expected behavior for such systems.
             """)
 
 # Clear button to reset everything
@@ -752,5 +726,8 @@ with st.expander("📋 How to enter coefficients"):
 
 # Requirements info
 with st.expander("🔧 Installation"):
-    st.code("pip install streamlit numpy matplotlib scipy pillow sympy")
-
+    st.code("pip install streamlit numpy matplotlib control sympy pillow")
+    st.markdown("""
+    **Note:** The `control` library is specifically designed for control systems and provides
+    good handling of Nyquist plots, especially for systems with poles on the imaginary axis.
+    """)
