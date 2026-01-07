@@ -1,3 +1,5 @@
+[file name]: app.py
+[file content begin]
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -104,51 +106,26 @@ class ControlVisualizer:
             st.error(f"Error computing symbolic expressions: {str(e)}")
             return None, None, None
     
-    def plot_bode_native(self):
-        """Plot Bode diagram using control library's native plotting"""
-        try:
-            # Create a new figure and use control's bode_plot
-            fig = plt.figure(figsize=(10, 8))
-            
-            # Use control library's bode_plot with plot=True
-            # This will create the plot on the current figure
-            ct.bode_plot(self.sys, self.w, plot=True)
-            
-            # Get the current figure that was created by bode_plot
-            fig = plt.gcf()
-            fig.set_size_inches(10, 8)
-            
-            # Add title
-            fig.suptitle(f'Bode Diagram', fontsize=16)
-            
-            # Adjust layout
-            plt.tight_layout()
-            
-            return fig
-            
-        except Exception as e:
-            st.error(f"Error in native Bode plot: {str(e)}")
-            # Fallback to manual plotting
-            return self._plot_bode_fallback()
-    
-    def _plot_bode_fallback(self):
-        """Fallback Bode plot if native plotting fails"""
+    def plot_bode(self):
+        """Plot Bode diagram with custom styling"""
         mag, phase, w = ct.bode(self.sys, self.w, plot=False)
         mag_db = 20 * np.log10(mag)
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
         
-        # Magnitude plot
+        # Magnitude plot - BLUE
         ax1.semilogx(w, mag_db, 'b', linewidth=2)
-        ax1.set_ylabel('Magnitude [dB]', fontsize=12)
+        ax1.set_ylabel('Magnitude [dB]', fontsize=12, color='b')
+        ax1.tick_params(axis='y', labelcolor='b')
         ax1.grid(True, which='both', linestyle='--', alpha=0.5)
-        ax1.set_title(f'Bode Diagram (ω: 10^{{{self.min_freq}}} to 10^{{{self.max_freq}}} rad/s)', fontsize=14)
+        ax1.set_title(f'Bode Diagram', fontsize=14)
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
-        # Phase plot
+        # Phase plot - RED
         ax2.semilogx(w, phase, 'r', linewidth=2)
-        ax2.set_ylabel('Phase [deg]', fontsize=12)
+        ax2.set_ylabel('Phase [deg]', fontsize=12, color='r')
         ax2.set_xlabel('Frequency [rad/s]', fontsize=12)
+        ax2.tick_params(axis='y', labelcolor='r')
         ax2.grid(True, which='both', linestyle='--', alpha=0.5)
         ax2.set_title(f'Phase Response', fontsize=14)
         ax2.set_xlim([10**self.min_freq, 10**self.max_freq])
@@ -163,7 +140,6 @@ class ControlVisualizer:
             fig = plt.figure(figsize=(8, 8))
             
             # Use control library's nyquist_plot with plot=True
-            # This will create the plot on the current figure
             ct.nyquist_plot(self.sys, omega=self.w, plot=True)
             
             # Get the current figure that was created by nyquist_plot
@@ -279,18 +255,20 @@ class ControlVisualizer:
         ax2 = plt.subplot2grid((2, 2), (1, 0))  # Phase
         ax3 = plt.subplot2grid((2, 2), (0, 1), rowspan=2)  # Nyquist
         
-        # Setup Bode magnitude plot
+        # Setup Bode magnitude plot - BLUE
         ax1.semilogx(self.w_anim, self.mag_db_anim, 'b', alpha=0.3, linewidth=1)
-        ax1.set_title('Bode - Magnitude', fontsize=12)
-        ax1.set_ylabel('Magnitude [dB]')
+        ax1.set_title('Bode - Magnitude [dB]', fontsize=12, color='b')
+        ax1.set_ylabel('Magnitude [dB]', color='b')
+        ax1.tick_params(axis='y', labelcolor='b')
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
-        # Setup Bode phase plot
+        # Setup Bode phase plot - RED
         ax2.semilogx(self.w_anim, self.phase_anim, 'r', alpha=0.3, linewidth=1)
-        ax2.set_title('Bode - Phase', fontsize=12)
-        ax2.set_ylabel('Phase [deg]')
+        ax2.set_title('Bode - Phase [deg]', fontsize=12, color='r')
+        ax2.set_ylabel('Phase [deg]', color='r')
         ax2.set_xlabel('Frequency [rad/s]')
+        ax2.tick_params(axis='y', labelcolor='r')
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim([10**self.min_freq, 10**self.max_freq])
         
@@ -396,7 +374,7 @@ class ControlVisualizer:
             nyquist_trajectory.set_data(self.nyquist_real_anim[:idx+1], self.nyquist_imag_anim[:idx+1])
             
             # Update text
-            text_box.set_text(f'Frequency: {freq:.2f} rad/s\nMagnitude: {mag_lin:.3f}\nPhase: {phase_deg:.1f}°')
+            text_box.set_text(f'Frequency: {freq:.2f} rad/s\nMagnitude: {mag_lin:.3f} ({mag_db:.1f} dB)\nPhase: {phase_deg:.1f}°')
             
             return mag_point, phase_point, circle, phase_line, nyquist_point, nyquist_trajectory, text_box
         
@@ -629,7 +607,8 @@ if st.session_state.visualizer is not None:
     
     with tab1:
         st.markdown("### Bode Plot")
-        fig_bode = visualizer.plot_bode_native()
+        st.markdown("**Magnitude (blue) in dB, Phase (red) in degrees**")
+        fig_bode = visualizer.plot_bode()
         st.pyplot(fig_bode)
         plt.close(fig_bode)
         
@@ -756,6 +735,6 @@ with st.expander("📋 How to enter coefficients"):
 with st.expander("🔧 Installation"):
     st.code("pip install streamlit numpy matplotlib control sympy pillow")
     st.markdown("""
-    **Note:** This version uses the control library's native plotting functions (`bode_plot` and `nyquist_plot`)
-    which provide professional-quality plots with proper handling of special cases.
+    **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
+    The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
