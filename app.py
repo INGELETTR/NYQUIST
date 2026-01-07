@@ -1,3 +1,5 @@
+[file name]: app.py
+[file content begin]
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -49,10 +51,10 @@ class ControlVisualizer:
         # For animation (fewer points for speed)
         self.w_anim = np.logspace(min_freq, max_freq, 200)
         
-        # Get data for animation
-        mag_anim, phase_anim, _ = ct.bode(self.sys, self.w_anim, plot=False)
+        # Get data for animation - phase in degrees
+        mag_anim, phase_anim, _ = ct.bode(self.sys, self.w_anim, plot=False, deg=True)
         self.mag_anim = mag_anim
-        self.phase_anim = phase_anim
+        self.phase_anim = phase_anim  # Now in degrees
         self.mag_db_anim = 20 * np.log10(mag_anim)
         
         # Calculate complex response for animation
@@ -106,8 +108,12 @@ class ControlVisualizer:
     
     def plot_bode(self):
         """Plot Bode diagram with custom styling"""
-        mag, phase, w = ct.bode(self.sys, self.w, deg = True,plot=False)
+        # Get magnitude and phase in degrees
+        mag, phase, w = ct.bode(self.sys, self.w, plot=False, deg=True)
         mag_db = 20 * np.log10(mag)
+        
+        # Unwrap phase to remove discontinuities
+        phase = np.unwrap(phase, period=360)
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
         
@@ -138,7 +144,7 @@ class ControlVisualizer:
             fig = plt.figure(figsize=(8, 8))
             
             # Use control library's nyquist_plot with plot=True
-            ct.nyquist_plot(self.sys, omega=self.w, plot=True,indent_radius = 0.2)
+            ct.nyquist_plot(self.sys, omega=self.w, plot=True, indent_radius=0.2)
             
             # Get the current figure that was created by nyquist_plot
             fig = plt.gcf()
@@ -253,6 +259,9 @@ class ControlVisualizer:
         ax2 = plt.subplot2grid((2, 2), (1, 0))  # Phase
         ax3 = plt.subplot2grid((2, 2), (0, 1), rowspan=2)  # Nyquist
         
+        # Unwrap phase for smoother animation display
+        phase_anim_unwrapped = np.unwrap(self.phase_anim, period=360)
+        
         # Setup Bode magnitude plot - BLUE
         ax1.semilogx(self.w_anim, self.mag_db_anim, 'b', alpha=0.3, linewidth=1)
         ax1.set_title('Bode - Magnitude [dB]', fontsize=12, color='b')
@@ -262,7 +271,7 @@ class ControlVisualizer:
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
         # Setup Bode phase plot - RED
-        ax2.semilogx(self.w_anim, self.phase_anim, 'r', alpha=0.3, linewidth=1)
+        ax2.semilogx(self.w_anim, phase_anim_unwrapped, 'r', alpha=0.3, linewidth=1)
         ax2.set_title('Bode - Phase [deg]', fontsize=12, color='r')
         ax2.set_ylabel('Phase [deg]', color='r')
         ax2.set_xlabel('Frequency [rad/s]')
@@ -350,7 +359,7 @@ class ControlVisualizer:
             freq = self.w_anim[idx]
             mag_db = self.mag_db_anim[idx]
             mag_lin = self.mag_anim[idx]
-            phase_deg = self.phase_anim[idx]
+            phase_deg = phase_anim_unwrapped[idx]  # Use unwrapped phase
             phase_rad = np.radians(phase_deg)
             
             # Update Bode points
@@ -592,8 +601,7 @@ if st.session_state.visualizer is not None:
     
     with col2:
         if G_latex:
-            st.markdown(f"**Transfer Function (LaTeX):**")
-            st.markdown(f"$$G(s) = {G_latex}$$")
+            print("A")
     
     if real_latex and imag_latex:
         st.markdown("**Real and Imaginary Parts:**")
@@ -736,11 +744,3 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
-
-
-
-
-
-
-
-
