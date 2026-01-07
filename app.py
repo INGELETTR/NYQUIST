@@ -62,7 +62,7 @@ class NyquistVisualizer:
         """Compute symbolic real and imaginary parts of G(jω)"""
         try:
             # Define symbols
-            s, omega = sp.symbols('s omega', real=False)
+            s, omega = sp.symbols('s omega', real=True)
             
             # Create numerator and denominator polynomials
             num_poly = sum(c * s**i for i, c in enumerate(reversed(num_coeffs)))
@@ -635,3 +635,4 @@ with st.expander("📋 How to enter coefficients"):
 # Requirements info
 with st.expander("🔧 Installation"):
     st.code("pip install streamlit numpy matplotlib scipy pillow sympy")
+
