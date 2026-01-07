@@ -7,6 +7,7 @@ import base64
 from io import BytesIO
 import tempfile
 import os
+import sympy as sp
 warnings.filterwarnings('ignore')
 
 # Set page config
@@ -56,6 +57,37 @@ class NyquistVisualizer:
         phase_rad_anim = np.radians(self.phase_anim)
         self.nyquist_real_anim = self.mag_linear_anim * np.cos(phase_rad_anim)
         self.nyquist_imag_anim = self.mag_linear_anim * np.sin(phase_rad_anim)
+    
+    def get_symbolic_expressions(self, num_coeffs, den_coeffs):
+        """Compute symbolic real and imaginary parts of G(jω)"""
+        try:
+            # Define symbols
+            s, omega = sp.symbols('s omega', real=False)
+            
+            # Create numerator and denominator polynomials
+            num_poly = sum(c * s**i for i, c in enumerate(reversed(num_coeffs)))
+            den_poly = sum(c * s**i for i, c in enumerate(reversed(den_coeffs)))
+            
+            # Create transfer function
+            G = num_poly / den_poly
+            
+            # Substitute s = jω
+            G_jw = G.subs(s, sp.I * omega)
+            
+            # Separate real and imaginary parts
+            real_part = sp.simplify(sp.re(G_jw))
+            imag_part = sp.simplify(sp.im(G_jw))
+            
+            # Convert to LaTeX
+            G_latex = sp.latex(G)
+            real_latex = sp.latex(real_part)
+            imag_latex = sp.latex(imag_part)
+            
+            return G_latex, real_latex, imag_latex
+            
+        except Exception as e:
+            st.error(f"Error computing symbolic expressions: {str(e)}")
+            return None, None, None
     
     def plot_bode(self):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
@@ -436,7 +468,7 @@ if st.button("Generate Plots", type="primary", use_container_width=True):
 if st.session_state.visualizer is not None:
     visualizer = st.session_state.visualizer
     
-    # Display the transfer function
+    # Display the transfer function and real/imag parts
     def format_poly(coeffs, var='s'):
         """Format coefficients as polynomial string"""
         n = len(coeffs)
@@ -454,8 +486,26 @@ if st.session_state.visualizer is not None:
             return "0"
         return " + ".join(terms).replace("+ -", "- ")
     
-    st.markdown(f"**Transfer Function:**")
-    st.markdown(f"$$G(s) = \\frac{{{format_poly(st.session_state.num_coeffs)}}}{{{format_poly(st.session_state.den_coeffs)}}}$$")
+    # Get symbolic expressions
+    G_latex, real_latex, imag_latex = visualizer.get_symbolic_expressions(
+        st.session_state.num_coeffs, st.session_state.den_coeffs
+    )
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"**Transfer Function:**")
+        st.markdown(f"$$G(s) = \\frac{{{format_poly(st.session_state.num_coeffs)}}}{{{format_poly(st.session_state.den_coeffs)}}}$$")
+    
+    with col2:
+        if G_latex:
+            st.markdown(f"**Transfer Function (LaTeX):**")
+            st.markdown(f"$$G(s) = {G_latex}$$")
+    
+    if real_latex and imag_latex:
+        st.markdown("**Real and Imaginary Parts:**")
+        st.markdown(f"$$\\text{{Re}}[G(j\\omega)] = {real_latex}$$")
+        st.markdown(f"$$\\text{{Im}}[G(j\\omega)] = {imag_latex}$$")
     
     # Tabs for different views
     tab1, tab2, tab3 = st.tabs(["Bode Plot", "Nyquist Diagram", "Nyquist Construction"])
@@ -584,4 +634,4 @@ with st.expander("📋 How to enter coefficients"):
 
 # Requirements info
 with st.expander("🔧 Installation"):
-    st.code("pip install streamlit numpy matplotlib scipy pillow")
+    st.code("pip install streamlit numpy matplotlib scipy pillow sympy")
