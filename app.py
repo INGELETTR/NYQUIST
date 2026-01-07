@@ -1,4 +1,5 @@
-
+[file name]: app.py
+[file content begin]
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -50,10 +51,11 @@ class ControlVisualizer:
         # For animation (fewer points for speed)
         self.w_anim = np.logspace(min_freq, max_freq, 200)
         
-        # Get data for animation - phase in degrees
-        mag_anim, phase_anim, _ = ct.bode(self.sys, self.w_anim, plot=False, deg=True)
+        # Get data for animation - phase in radians initially
+        mag_anim, phase_anim_rad, _ = ct.bode(self.sys, self.w_anim, plot=False)
         self.mag_anim = mag_anim
-        self.phase_anim = phase_anim  # Now in degrees
+        self.phase_anim_rad = phase_anim_rad  # Phase in radians
+        self.phase_anim = np.degrees(phase_anim_rad)  # Convert to degrees
         self.mag_db_anim = 20 * np.log10(mag_anim)
         
         # Calculate complex response for animation
@@ -107,12 +109,13 @@ class ControlVisualizer:
     
     def plot_bode(self):
         """Plot Bode diagram with custom styling"""
-        # Get magnitude and phase in degrees
-        mag, phase, w = ct.bode(self.sys, self.w, plot=False, deg=True)
+        # Get magnitude and phase in radians
+        mag, phase_rad, w = ct.bode(self.sys, self.w, plot=False)
         mag_db = 20 * np.log10(mag)
         
-        # Unwrap phase to remove discontinuities
-        phase = np.unwrap(phase, period=360)
+        # Convert phase to degrees and unwrap to remove discontinuities
+        phase_deg = np.degrees(phase_rad)
+        phase_deg = np.unwrap(phase_deg, period=360)
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
         
@@ -125,7 +128,7 @@ class ControlVisualizer:
         ax1.set_xlim([10**self.min_freq, 10**self.max_freq])
         
         # Phase plot - RED
-        ax2.semilogx(w, phase, 'r', linewidth=2)
+        ax2.semilogx(w, phase_deg, 'r', linewidth=2)
         ax2.set_ylabel('Phase [deg]', fontsize=12, color='r')
         ax2.set_xlabel('Frequency [rad/s]', fontsize=12)
         ax2.tick_params(axis='y', labelcolor='r')
@@ -358,8 +361,8 @@ class ControlVisualizer:
             freq = self.w_anim[idx]
             mag_db = self.mag_db_anim[idx]
             mag_lin = self.mag_anim[idx]
-            phase_deg = phase_anim_unwrapped[idx]  # Use unwrapped phase
-            phase_rad = np.radians(phase_deg)
+            phase_deg = phase_anim_unwrapped[idx]  # Use unwrapped phase in degrees
+            phase_rad = np.radians(phase_deg)  # Convert to radians for calculations
             
             # Update Bode points
             mag_point.set_data([freq], [mag_db])
@@ -743,4 +746,3 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
-
