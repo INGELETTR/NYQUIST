@@ -144,7 +144,7 @@ class ControlVisualizer:
             fig = plt.figure(figsize=(8, 8))
             
             # Use control library's nyquist_plot with plot=True
-            ct.nyquist_plot(self.sys, omega=self.w, plot=True, indent_radius=0.2,indent_direction="none")
+            ct.nyquist_plot(self.sys, omega=self.w, plot=True, indent_radius=0.2,indent_direction="left")
             
             # Get the current figure that was created by nyquist_plot
             fig = plt.gcf()
@@ -744,6 +744,7 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
+
 
 
 
