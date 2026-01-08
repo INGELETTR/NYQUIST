@@ -31,7 +31,7 @@ class ControlVisualizer:
     def __init__(self, num=None, den=None, min_freq=-2, max_freq=2):
         if num is not None and den is not None:
             # Create transfer function using control library
-            self.sys = ct.TransferFunction(num, den)
+            self.sys = ct.tf(num, den)
         else:
             raise ValueError("Must provide num and den coefficients")
         
@@ -744,6 +744,7 @@ with st.expander("🔧 Installation"):
     **Note:** The Bode plot now uses custom styling with **blue for magnitude (in dB)** and **red for phase (in degrees)**.
     The Nyquist diagram continues to use the control library's native plotting for professional results.
     """)
+
 
 
 
