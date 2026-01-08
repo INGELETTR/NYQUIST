@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(
     page_title="Bode & Nyquist Visualizer",
     page_icon="📈",
-    layout="wide""
+    layout="wide"
 )
 
 # Initialize session state
